@@ -2,10 +2,10 @@
 # Build a TrollStore/ldid-ready IPA for the iOS app and packet tunnel extension.
 #
 # Usage:
-#   cd ios && ./build_unsigned_ipa.sh
+#   ./build_unsigned_ipa.sh
 #
 # Output:
-#   ios/build/unsigned-ipa/Tailscale-trollstore.ipa
+#   build/unsigned-ipa/AwgScale-trollstore.ipa
 #
 # Note:
 #   TrollStore still needs device-side ldid or a pre-applied CoreTrust bypass
@@ -16,11 +16,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-SCHEME="Tailscale"
-PROJECT="Tailscale.xcodeproj"
+SCHEME="AwgScale"
+PROJECT="AwgScale.xcodeproj"
 CONFIGURATION="Debug"
 SDK="iphoneos"
-OUTPUT_IPA_REL="build/unsigned-ipa/Tailscale-trollstore.ipa"
+OUTPUT_IPA_REL="build/unsigned-ipa/AwgScale-trollstore.ipa"
 DERIVED_DATA_REL="build/unsigned-ipa/DerivedData"
 SIGN_MODE="trollstore"
 TEAM_ID="TROLLSTORE"
@@ -35,11 +35,11 @@ need device-side ldid or a pre-applied CoreTrust bypass to finish installation.
 TrollStore error 173 means ldid is missing in TrollStore Settings.
 
 Options:
-  --scheme NAME           Xcode scheme to build (default: Tailscale)
-  --project PATH          Xcode project path relative to ios/ (default: Tailscale.xcodeproj)
-  --configuration NAME    Build configuration (default: Debug)
-  --out PATH              Output IPA path relative to ios/ or absolute path
-  --derived-data PATH     DerivedData path relative to ios/ or absolute path
+    --scheme NAME           Xcode scheme to build (default: AwgScale)
+    --project PATH          Xcode project path relative to project root (default: AwgScale.xcodeproj)
+    --configuration NAME    Build configuration (default: Debug)
+    --out PATH              Output IPA path relative to project root or absolute path
+    --derived-data PATH     DerivedData path relative to project root or absolute path
   --team-id ID            Fake team ID for ad-hoc entitlements (default: TROLLSTORE)
   --pure-unsigned         Strip signatures and do not embed entitlements
   -h, --help              Show this help
@@ -65,11 +65,11 @@ write_entitlements() {
     <string>${TEAM_ID}</string>
     <key>com.apple.security.application-groups</key>
     <array>
-        <string>group.top.yesican.tailscale</string>
+        <string>group.top.yesican.awgscale</string>
     </array>
     <key>keychain-access-groups</key>
     <array>
-        <string>${TEAM_ID}.top.yesican.tailscale.shared</string>
+        <string>${TEAM_ID}.top.yesican.awgscale.shared</string>
     </array>
     <key>com.apple.developer.networking.networkextension</key>
     <array>
@@ -217,7 +217,7 @@ if [[ ! -d "$PROJECT_PATH" ]]; then
 fi
 
 if [[ ! -d "$SCRIPT_DIR/Libtailscale.xcframework" ]]; then
-    echo "Missing ios/Libtailscale.xcframework. Run ./build_go.sh --device or ./build_go.sh --all first." >&2
+    echo "Missing Libtailscale.xcframework. Run ./build_go.sh --device or ./build_go.sh --all first." >&2
     exit 1
 fi
 
@@ -285,7 +285,7 @@ fi
 echo "Size: $IPA_SIZE"
 echo ""
 if [[ "$SIGN_MODE" == "trollstore" ]]; then
-    echo "Entitlements embedded for TrollStore. Inspect with: codesign -d --entitlements :- Payload/Tailscale.app"
+    echo "Entitlements embedded for TrollStore. Inspect with: codesign -d --entitlements :- Payload/AwgScale.app"
     echo "If TrollStore returns 173, install ldid from TrollStore Settings and retry this same IPA."
 else
     echo "Pure unsigned mode has no embedded entitlements and may fail TrollStore dumpEntitlements."

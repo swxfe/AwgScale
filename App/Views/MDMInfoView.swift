@@ -97,7 +97,7 @@ struct MDMInfoView: View {
                     
                     if mdm.useTailscaleDNSSettings != .unset {
                         PolicyRow(
-                            name: "Tailscale DNS",
+                            name: "Managed DNS",
                             value: mdm.useTailscaleDNSSettings == .always ? "Enabled" : "Disabled",
                             icon: "network.badge.shield.half.filled"
                         )
@@ -152,19 +152,6 @@ struct MDMInfoView: View {
                 }
             }
             
-            // Info section
-            Section {
-                Link(destination: URL(string: "https://tailscale.com/kb/1258/device-management")!) {
-                    HStack {
-                        Image(systemName: "questionmark.circle")
-                            .foregroundColor(.blue)
-                        Text("Learn about MDM")
-                        Spacer()
-                        Image(systemName: "arrow.up.right.square")
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
         }
         .navigationTitle("Device Management")
         .navigationBarTitleDisplayMode(.inline)

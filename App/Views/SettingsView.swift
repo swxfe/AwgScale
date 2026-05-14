@@ -146,7 +146,7 @@ struct SettingsView: View {
                         Image(systemName: "info.circle")
                             .foregroundColor(.accentColor)
                             .frame(width: 24)
-                        Text("About Tailscale")
+                        Text("About AwgScale")
                     }
                 }
             }

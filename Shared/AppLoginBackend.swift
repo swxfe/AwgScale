@@ -12,7 +12,7 @@ final class AppLoginBackend {
 
         let containerURL = sharedContainerURL ?? fallbackContainerURL()
 
-        let dataDirURL = containerURL.appendingPathComponent("tailscale", isDirectory: true)
+        let dataDirURL = containerURL.appendingPathComponent("awgscale", isDirectory: true)
         let directFileRootURL = containerURL.appendingPathComponent("taildrop", isDirectory: true)
 
         try FileManager.default.createDirectory(at: dataDirURL, withIntermediateDirectories: true)
@@ -79,7 +79,7 @@ final class AppLoginBackend {
 
 private func fallbackContainerURL() -> URL {
     let urls = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-    return urls[0].appendingPathComponent("TailscaleLogin", isDirectory: true)
+    return urls[0].appendingPathComponent("AwgScaleLogin", isDirectory: true)
 }
 
 enum AppLoginBackendError: Error, LocalizedError {

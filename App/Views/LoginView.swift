@@ -13,7 +13,7 @@ struct LoginView: View {
                 .font(.system(size: 64))
                 .foregroundColor(.accentColor)
 
-            Text("Tailscale")
+            Text("AwgScale")
                 .font(.largeTitle)
                 .fontWeight(.bold)
 
@@ -95,7 +95,7 @@ private struct CustomServerLoginView: View {
                 } header: {
                     Text("Control Server")
                 } footer: {
-                    Text("Enter the URL for your Headscale or Tailscale-compatible control server.")
+                    Text("Enter the URL for your Headscale or compatible control server.")
                 }
 
                 if let validationError = validationError {

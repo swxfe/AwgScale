@@ -17,16 +17,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private let logger = Logger(subsystem: IPCConstants.appBundleID, category: "tunnel")
-    private let defaultRouteMonitorQueue = DispatchQueue(label: "top.yesican.tailscale.default-route-monitor")
+    private let defaultRouteMonitorQueue = DispatchQueue(label: "top.yesican.awgscale.default-route-monitor")
     private var defaultRouteMonitor: NWPathMonitor?
     private let packetBridgeStallThreshold: TimeInterval = 30
     private let underlayRebindCooldown: TimeInterval = 60
     private var notifyHandle: NotificationHandle?
     private var tunnelConfigCallback: AnyObject?
-    private let packetQueue = DispatchQueue(label: "top.yesican.tailscale.packetflow", qos: .userInitiated)
+    private let packetQueue = DispatchQueue(label: "top.yesican.awgscale.packetflow", qos: .userInitiated)
     private let packetQueueKey = DispatchSpecificKey<Void>()
     private var packetReadLoopRunning = false
-    private let tunnelSettingsQueue = DispatchQueue(label: "top.yesican.tailscale.tunnel-settings")
+    private let tunnelSettingsQueue = DispatchQueue(label: "top.yesican.awgscale.tunnel-settings")
     private var tunnelStopping = false
     private var tunnelSettingsInFlight = false
     private var pendingTunnelSettings: TunnelSettingsRequest?
@@ -60,7 +60,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
 
-        let dataDir = containerURL.appendingPathComponent("tailscale", isDirectory: true).path
+        let dataDir = containerURL.appendingPathComponent("awgscale", isDirectory: true).path
         let directFileRoot = containerURL.appendingPathComponent("taildrop", isDirectory: true).path
 
         // Ensure directories exist
@@ -142,6 +142,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         // Write disconnected state to shared defaults
         sharedDefaults?.set(false, forKey: IPCConstants.keyTunnelHasDefaultRoute)
+        sharedDefaults?.removeObject(forKey: IPCConstants.keyLastError)
         writeSharedState(ipnState: 3) // IpnState.stopped
 
         completionHandler()
@@ -238,7 +239,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             if let matchDomains = config.dnsMatchDomains, !matchDomains.isEmpty {
                 dns.matchDomains = matchDomains
             } else {
-                dns.matchDomains = [""] // Primary resolver for Tailscale DNS.
+                dns.matchDomains = [""]
             }
             if !config.dnsDomains.isEmpty {
                 dns.searchDomains = config.dnsDomains
@@ -263,6 +264,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
             case .startLoginInteractive:
                 handleStartLoginInteractive(completionHandler: completionHandler)
+
+            case .prepareToStop:
+                handlePrepareToStop(completionHandler: completionHandler)
             }
         } catch {
             logger.error("handleAppMessage: decode failed: \(error.localizedDescription)")
@@ -332,6 +336,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 completionHandler?(try? JSONEncoder().encode(resp))
             }
         }
+    }
+
+    private func handlePrepareToStop(completionHandler: ((Data?) -> Void)?) {
+        logger.log("prepareToStop: app requested tunnel shutdown")
+        markTunnelStopping()
+        sharedDefaults?.removeObject(forKey: IPCConstants.keyLastError)
+        postDarwinNotification(IPCConstants.notifyStateChanged)
+        let resp = IPCResponse.success(statusCode: 200)
+        completionHandler?(try? JSONEncoder().encode(resp))
     }
 
     // MARK: - Notification Handling
@@ -615,15 +628,21 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             self.reasserting = true
             self.setTunnelNetworkSettings(request.settings) { [weak self] error in
+                var completionError = error
                 if let error = error {
-                    self?.logger.error("setTunnelNetworkSettings failed: \(error.localizedDescription)")
-                    if request.hasDefaultRoute != nil {
+                    if self?.isTunnelStopping() == true {
+                        completionError = nil
+                        self?.logger.log("setTunnelNetworkSettings failed while stopping; suppressing: \(error.localizedDescription)")
+                    } else {
+                        self?.logger.error("setTunnelNetworkSettings failed: \(error.localizedDescription)")
+                    }
+                    if request.hasDefaultRoute != nil && self?.isTunnelStopping() != true {
                         self?.publishLastError("setTunnelNetworkSettings failed: \(error.localizedDescription)")
                     }
                 } else if let hasDefaultRoute = request.hasDefaultRoute {
                     self?.publishTunnelDefaultRoute(hasDefaultRoute)
                 }
-                request.completion?(error)
+                request.completion?(completionError)
                 self?.finishTunnelSettingsUpdate()
             }
         }

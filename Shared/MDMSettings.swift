@@ -3,8 +3,7 @@ import Foundation
 /// MDM (Mobile Device Management) settings handler.
 /// Reads managed app configuration from Apple's configuration profile.
 ///
-/// Supported keys match Tailscale's official MDM policy keys:
-/// https://tailscale.com/kb/1258/device-management
+/// Supported keys match the compatible control-plane MDM policy schema.
 @MainActor
 class MDMSettings: ObservableObject {
     
@@ -43,10 +42,10 @@ class MDMSettings: ObservableObject {
     /// Allow LAN access when using exit node
     var exitNodeAllowLANAccess: TriState { getTriState("ExitNodeAllowLANAccess") }
     
-    /// Use Tailscale DNS settings
+    /// Use managed DNS settings
     var useTailscaleDNSSettings: TriState { getTriState("UseTailscaleDNSSettings") }
     
-    /// Use Tailscale subnet routes
+    /// Use managed subnet routes
     var useTailscaleSubnets: TriState { getTriState("UseTailscaleSubnets") }
     
     /// Hidden network devices (filtered from UI)

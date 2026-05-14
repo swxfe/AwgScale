@@ -5,7 +5,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/LiuTangLei/tailscale-ios/libtailscale/ifaceparse"
+	"github.com/LiuTangLei/awgscale-ios/libtailscale/ifaceparse"
 	"tailscale.com/net/dns"
 	"tailscale.com/net/netmon"
 	"tailscale.com/util/dnsname"

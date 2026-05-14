@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Multi-profile management view.
-/// Allows switching between different Tailscale accounts/profiles.
+/// Allows switching between different accounts/profiles.
 struct ProfilesView: View {
     @EnvironmentObject var appState: AppState
     @State private var profiles: [LoginProfile] = []
@@ -83,7 +83,7 @@ struct ProfilesView: View {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     Label {
-                        Text("Profiles let you use multiple Tailscale accounts on this device.")
+                        Text("Profiles let you use multiple accounts on this device.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     } icon: {
@@ -316,7 +316,7 @@ struct AddProfileView: View {
             } header: {
                 Text("Authentication")
             } footer: {
-                Text("Enter an auth key from the Tailscale admin console. The key should start with 'tskey-auth-'.")
+                Text("Enter an auth key from your control plane admin console. The key should start with 'tskey-auth-'.")
             }
             
             if let error = error {

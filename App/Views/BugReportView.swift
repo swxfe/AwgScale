@@ -204,7 +204,7 @@ struct BugReportView: View {
                 
                 // Save to temp file
                 let reportID = diagnostics["report_id"] as! String
-                let fileName = "tailscale-bugreport-\(reportID).json"
+                let fileName = "awgscale-bugreport-\(reportID).json"
                 let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
                 try jsonData.write(to: tempURL)
                 

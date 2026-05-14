@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct TailscaleApp: App {
+struct AwgScaleApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var vpnManager = VPNManager()
     @StateObject private var appState = AppState()

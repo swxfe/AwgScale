@@ -1,4 +1,4 @@
-module github.com/LiuTangLei/tailscale-ios
+module github.com/LiuTangLei/awgscale-ios
 
 go 1.26.2
 

@@ -1,5 +1,5 @@
 import XCTest
-@testable import Tailscale
+@testable import AwgScale
 
 final class LocalAPITests: XCTestCase {
     private struct Sample: Codable, Equatable {

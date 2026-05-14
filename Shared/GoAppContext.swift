@@ -25,8 +25,6 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
         if includeLegacy {
             groups.insert(contentsOf: [
                 baseGroup,
-                "TROLLSTORE.com.tailscale.ipn.ios.shared",
-                "com.tailscale.ipn.ios.shared",
             ], at: 1)
         }
         return groups
@@ -438,7 +436,7 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
         }
         
         // Verify we can create Secure Enclave keys
-        let testTag = "top.yesican.tailscale.se-test"
+        let testTag = "top.yesican.awgscale.se-test"
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
@@ -462,7 +460,7 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
     /// Create a new Secure Enclave key for hardware attestation
     func hardwareAttestationKeyCreate(_ error: NSErrorPointer) -> String {
         let keyID = UUID().uuidString
-        let tag = "top.yesican.tailscale.attestation.\(keyID)"
+        let tag = "top.yesican.awgscale.attestation.\(keyID)"
         
         // Create access control for Secure Enclave
         var accessError: Unmanaged<CFError>?
@@ -509,7 +507,7 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
     func hardwareAttestationKeyRelease(_ keyID: String?) throws {
         guard let keyID = keyID else { return }
         
-        let tag = "top.yesican.tailscale.attestation.\(keyID)"
+        let tag = "top.yesican.awgscale.attestation.\(keyID)"
         
         // Remove from memory (thread-safe)
         GoAppContext.removeLoadedKey(keyID)
@@ -620,7 +618,7 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
             return
         }
         
-        let tag = "top.yesican.tailscale.attestation.\(keyID)"
+        let tag = "top.yesican.awgscale.attestation.\(keyID)"
         
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,

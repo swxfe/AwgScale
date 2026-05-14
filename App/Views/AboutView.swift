@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Enhanced About page with branding, version info, and legal links.
+/// About page with AwgScale branding, version info, and legal notices.
 struct AboutView: View {
     @EnvironmentObject var appState: AppState
     @State private var showCopiedToast: Bool = false
@@ -21,19 +21,17 @@ struct AboutView: View {
     
     var body: some View {
         List {
-            // Branding section
             Section {
                 VStack(spacing: 16) {
-                    // Logo placeholder
                     Image(systemName: "network")
                         .font(.system(size: 60))
                         .foregroundColor(.accentColor)
                     
-                    Text("Tailscale")
+                    Text("AwgScale")
                         .font(.title)
                         .fontWeight(.bold)
                     
-                    Text("Secure networking made simple")
+                    Text("Tailnet connectivity with Amnezia-WG controls")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -60,20 +58,7 @@ struct AboutView: View {
                 Text("Version")
             }
             
-            // Links section
             Section {
-                Link(destination: URL(string: "https://tailscale.com/")!) {
-                    LinkRow(title: "Website", icon: "globe")
-                }
-                
-                Link(destination: URL(string: "https://tailscale.com/kb/")!) {
-                    LinkRow(title: "Documentation", icon: "book")
-                }
-                
-                Link(destination: URL(string: "https://tailscale.com/contact/support")!) {
-                    LinkRow(title: "Support", icon: "questionmark.circle")
-                }
-                
                 NavigationLink(destination: BugReportView()) {
                     HStack {
                         Image(systemName: "ladybug")
@@ -83,19 +68,10 @@ struct AboutView: View {
                     }
                 }
             } header: {
-                Text("Help & Support")
+                Text("Diagnostics")
             }
             
-            // Legal section
             Section {
-                Link(destination: URL(string: "https://tailscale.com/privacy-policy")!) {
-                    LinkRow(title: "Privacy Policy", icon: "hand.raised")
-                }
-                
-                Link(destination: URL(string: "https://tailscale.com/terms")!) {
-                    LinkRow(title: "Terms of Service", icon: "doc.text")
-                }
-                
                 NavigationLink(destination: LicensesView()) {
                     HStack {
                         Image(systemName: "doc.plaintext")
@@ -108,9 +84,13 @@ struct AboutView: View {
                 Text("Legal")
             }
             
-            // Copyright
             Section {
-                Text("© 2024 Tailscale Inc.")
+                Text("AwgScale is a third-party iOS client compatible with Tailscale and similar in role to tailscale-ios.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                Text("AwgScale is independent open source software and is not an official product of any control-plane provider.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -169,12 +149,12 @@ struct LicensesView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                Text("This app includes open source software.")
+                Text("This app includes open source software. Redistribution must preserve the license notices and disclaimers included with the source and binary artifacts.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                 
                 LicenseSection(
-                    name: "Tailscale",
+                    name: "tailscale.com open source components",
                     license: "BSD 3-Clause License",
                     url: "https://github.com/tailscale/tailscale"
                 )

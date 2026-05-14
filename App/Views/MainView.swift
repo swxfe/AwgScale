@@ -159,7 +159,7 @@ struct MainView: View {
                     }
                 }
             }
-            .navigationTitle("Tailscale")
+            .navigationTitle("AwgScale")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     NavigationLink(destination: SettingsView()) {

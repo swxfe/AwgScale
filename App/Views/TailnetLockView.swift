@@ -164,20 +164,6 @@ struct TailnetLockView: View {
                     .padding(.vertical, 8)
                 }
             }
-            
-            // Info section
-            Section {
-                Link(destination: URL(string: "https://tailscale.com/kb/1226/tailnet-lock")!) {
-                    HStack {
-                        Image(systemName: "questionmark.circle")
-                            .foregroundColor(.blue)
-                        Text("Learn about Tailnet Lock")
-                        Spacer()
-                        Image(systemName: "arrow.up.right.square")
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
         }
         .navigationTitle("Tailnet Lock")
         .navigationBarTitleDisplayMode(.inline)
@@ -330,7 +316,7 @@ struct SignURLView: View {
             } header: {
                 Text("Sign URL")
             } footer: {
-                Text("Enter the signing URL from the node that needs to be signed. URLs typically start with 'tailscale://sign/'.")
+                Text("Enter the signing URL from the node that needs to be signed.")
             }
             
             Section {

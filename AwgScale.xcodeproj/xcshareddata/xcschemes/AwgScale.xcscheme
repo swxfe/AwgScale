@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
    LastUpgradeVersion = "1600"
-   wasCreatedForAppExtension = "YES"
    version = "1.7">
    <BuildAction
       parallelizeBuildables = "YES"
@@ -16,10 +15,10 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "AEF0E6CE89B1A2102BFEB3D2"
-               BuildableName = "PacketTunnel.appex"
-               BlueprintName = "PacketTunnel"
-               ReferencedContainer = "container:Tailscale.xcodeproj">
+               BlueprintIdentifier = "A49174A004B49450B895F4DB"
+               BuildableName = "AwgScale.app"
+               BlueprintName = "AwgScale"
+               ReferencedContainer = "container:AwgScale.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
          <BuildActionEntry
@@ -30,10 +29,10 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "DB2FF37375807F7A4BF03CC2"
-               BuildableName = "Tailscale.app"
-               BlueprintName = "Tailscale"
-               ReferencedContainer = "container:Tailscale.xcodeproj">
+               BlueprintIdentifier = "B57E4B12F4933924C93E7CC2"
+               BuildableName = "PacketTunnel.appex"
+               BlueprintName = "PacketTunnel"
+               ReferencedContainer = "container:AwgScale.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -47,10 +46,10 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "AEF0E6CE89B1A2102BFEB3D2"
-            BuildableName = "PacketTunnel.appex"
-            BlueprintName = "PacketTunnel"
-            ReferencedContainer = "container:Tailscale.xcodeproj">
+            BlueprintIdentifier = "A49174A004B49450B895F4DB"
+            BuildableName = "AwgScale.app"
+            BlueprintName = "AwgScale"
+            ReferencedContainer = "container:AwgScale.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
       <Testables>
@@ -59,10 +58,10 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "AEAEFAECE57023693B6CFC8D"
-               BuildableName = "TailscaleTests.xctest"
-               BlueprintName = "TailscaleTests"
-               ReferencedContainer = "container:Tailscale.xcodeproj">
+               BlueprintIdentifier = "5F704330394BF70CDEE39C3E"
+               BuildableName = "AwgScaleTests.xctest"
+               BlueprintName = "AwgScaleTests"
+               ReferencedContainer = "container:AwgScale.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -71,23 +70,22 @@
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
-      selectedDebuggerIdentifier = ""
-      selectedLauncherIdentifier = "Xcode.IDEFoundation.Launcher.PosixSpawn"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       launchStyle = "0"
       useCustomWorkingDirectory = "NO"
       ignoresPersistentStateOnLaunch = "NO"
       debugDocumentVersioning = "YES"
       debugServiceExtension = "internal"
-      allowLocationSimulation = "YES"
-      launchAutomaticallySubstyle = "2">
+      allowLocationSimulation = "YES">
       <BuildableProductRunnable
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "AEF0E6CE89B1A2102BFEB3D2"
-            BuildableName = "PacketTunnel.appex"
-            BlueprintName = "PacketTunnel"
-            ReferencedContainer = "container:Tailscale.xcodeproj">
+            BlueprintIdentifier = "A49174A004B49450B895F4DB"
+            BuildableName = "AwgScale.app"
+            BlueprintName = "AwgScale"
+            ReferencedContainer = "container:AwgScale.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
       <CommandLineArguments>
@@ -103,10 +101,10 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "AEF0E6CE89B1A2102BFEB3D2"
-            BuildableName = "PacketTunnel.appex"
-            BlueprintName = "PacketTunnel"
-            ReferencedContainer = "container:Tailscale.xcodeproj">
+            BlueprintIdentifier = "A49174A004B49450B895F4DB"
+            BuildableName = "AwgScale.app"
+            BlueprintName = "AwgScale"
+            ReferencedContainer = "container:AwgScale.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

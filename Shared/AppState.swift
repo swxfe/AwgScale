@@ -14,8 +14,8 @@ private enum LoginFlowError: Error, LocalizedError {
     }
 }
 
-private let appInstallMarkerKey = "top.yesican.tailscale.install-marker.v3"
-private let appInstallIdentityKey = "top.yesican.tailscale.install-identity.v1"
+private let appInstallMarkerKey = "top.yesican.awgscale.install-marker.v3"
+private let appInstallIdentityKey = "top.yesican.awgscale.install-identity.v1"
 
 private extension IpnState {
     init?(backendState: String) {
@@ -81,7 +81,7 @@ class AppState: ObservableObject {
     private var awgLastRefresh: Date?
     private let awgRefreshInterval: TimeInterval = 30
 
-    /// Reference to VPNManager for IPC. Set by TailscaleApp at launch.
+    /// Reference to VPNManager for IPC. Set by the app at launch.
     weak var vpnManager: VPNManager?
     private let loginBackend = AppLoginBackend()
     private var isCompletingAppLogin = false
@@ -323,7 +323,19 @@ class AppState: ObservableObject {
         }
 
         // Last error
-        lastError = defaults.string(forKey: IPCConstants.keyLastError)
+        let sharedLastError = defaults.string(forKey: IPCConstants.keyLastError)
+        if shouldSuppressSharedLastError(sharedLastError) {
+            lastError = nil
+            defaults.removeObject(forKey: IPCConstants.keyLastError)
+        } else {
+            lastError = sharedLastError
+        }
+    }
+
+    private func shouldSuppressSharedLastError(_ message: String?) -> Bool {
+        guard let message else { return false }
+        guard pendingWantRunning == false else { return false }
+        return message.localizedCaseInsensitiveContains("setTunnelNetworkSettings")
     }
 
     // MARK: - Notify Processing (direct, for Extension-side use)
@@ -481,7 +493,7 @@ class AppState: ObservableObject {
 
     /// Start interactive login flow without enabling the system VPN tunnel.
     /// Login runs a temporary in-app Go backend so the browser auth flow can
-    /// complete before the user chooses to turn Tailscale on.
+    /// complete before the user chooses to turn AwgScale on.
     func startLogin(controlURL: String = "") {
         guard !isLoggingIn else { return }
         guard !shouldProtectExistingSessionFromLoginStart else {
@@ -992,21 +1004,24 @@ class AppState: ObservableObject {
                 lastError = nil
 
                 if !wantRunning {
+                    sharedDefaults?.removeObject(forKey: IPCConstants.keyLastError)
                     if vpn.isTunnelActive {
-                        Task {
-                            do {
-                                let prefs = MaskedPrefs.setWantRunning(false)
-                                let body = try JSONEncoder().encode(prefs)
-                                let resp = try await vpn.callLocalAPI(method: "PATCH", endpoint: endpoint, body: body, timeout: 1000)
-                                try resp.requireSuccess(endpoint: endpoint)
-                            } catch {
-                                NSLog("Ignoring WantRunning=false persistence during VPN stop: \(error)")
-                            }
+                        do {
+                            let prefs = MaskedPrefs.setWantRunning(false)
+                            let body = try JSONEncoder().encode(prefs)
+                            let resp = try await vpn.callLocalAPI(method: "PATCH", endpoint: endpoint, body: body, timeout: 1000)
+                            try resp.requireSuccess(endpoint: endpoint)
+                        } catch {
+                            NSLog("Ignoring WantRunning=false persistence during VPN stop: \(error)")
                         }
+                        await vpn.prepareToDisconnect()
                     }
                     vpn.disconnect()
                     loginBackend.stop()
                     ipnState = .stopped
+                    await waitForVPNStopped(vpn)
+                    sharedDefaults?.removeObject(forKey: IPCConstants.keyLastError)
+                    lastError = nil
                     return
                 }
 
@@ -1465,7 +1480,6 @@ class AppState: ObservableObject {
 
     // MARK: - Exit Node
     // Note: iOS does not support running AS an exit node (only using exit nodes).
-    // See: https://tailscale.com/kb/1103/exit-nodes
 
     /// Set the exit node to use for routing traffic.
     func setExitNode(_ peer: PeerNode) {

@@ -30,7 +30,7 @@ struct SubnetRoutesView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("No subnet routes available")
                             .foregroundColor(.secondary)
-                        Text("Subnet routes allow you to access networks behind other Tailscale devices. Routes must be advertised by another device and approved by an admin.")
+                        Text("Subnet routes allow you to access networks behind other devices. Routes must be advertised by another device and approved by an admin.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -47,7 +47,7 @@ struct SubnetRoutesView: View {
                     } header: {
                         Text("Active Routes")
                     } footer: {
-                        Text("Traffic to these subnets is routed through Tailscale.")
+                        Text("Traffic to these subnets is routed through your overlay network.")
                     }
                 }
                 

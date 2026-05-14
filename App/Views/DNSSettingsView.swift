@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// DNS Settings view (read-only display).
-/// Shows the current DNS configuration from the Tailscale network.
+/// Shows the current DNS configuration from the overlay network.
 struct DNSSettingsView: View {
     @EnvironmentObject var appState: AppState
     @State private var dnsConfig: DNSConfig?
@@ -116,16 +116,16 @@ struct DNSSettingsView: View {
                     }
                 }
                 
-                // Use Tailscale DNS toggle info
+                // Managed DNS toggle info
                 Section {
                     HStack {
-                        Text("Use Tailscale DNS")
+                        Text("Use Managed DNS")
                         Spacer()
                         Text(config.useTailscaleDNS ? "Yes" : "No")
                             .foregroundColor(.secondary)
                     }
                 } footer: {
-                    Text("DNS settings are managed by your Tailnet admin in the admin console.")
+                    Text("DNS settings are managed by your network admin in the control plane.")
                 }
             } else {
                 Section {

@@ -75,7 +75,7 @@ struct TaildropView: View {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     Label {
-                        Text("Taildrop lets you transfer files between your Tailscale devices.")
+                        Text("Taildrop lets you transfer files between your devices.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     } icon: {

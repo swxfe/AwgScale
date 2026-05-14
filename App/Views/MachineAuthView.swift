@@ -196,7 +196,7 @@ struct MachineAuthHelpSheet: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("What is Machine Authorization?", systemImage: "questionmark.circle.fill")
                             .font(.headline)
-                        Text("Machine authorization is a security feature that requires an admin to approve new devices before they can join your Tailnet.")
+                        Text("Machine authorization is a security feature that requires an admin to approve new devices before they can join your network.")
                             .font(.body)
                             .foregroundColor(.secondary)
                     }
@@ -205,7 +205,7 @@ struct MachineAuthHelpSheet: View {
                         Label("How to Approve", systemImage: "checkmark.circle.fill")
                             .font(.headline)
                         
-                        StepRow(number: 1, text: "Go to the Tailscale admin console at admin.tailscale.com")
+                        StepRow(number: 1, text: "Open your control plane admin console")
                         StepRow(number: 2, text: "Navigate to the Machines page")
                         StepRow(number: 3, text: "Find this device in the list (it will show as pending)")
                         StepRow(number: 4, text: "Click on the device and select 'Authorize'")
@@ -214,17 +214,10 @@ struct MachineAuthHelpSheet: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("Need Help?", systemImage: "lifepreserver.fill")
                             .font(.headline)
-                        Text("Contact your Tailnet administrator for assistance with device approval.")
+                        Text("Contact your network administrator for assistance with device approval.")
                             .font(.body)
                             .foregroundColor(.secondary)
                         
-                        Link(destination: URL(string: "https://tailscale.com/kb/1099/machine-authorization")!) {
-                            HStack {
-                                Text("Learn more")
-                                Image(systemName: "arrow.up.right.square")
-                            }
-                        }
-                        .padding(.top, 4)
                     }
                 }
                 .padding()

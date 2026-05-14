@@ -100,7 +100,7 @@ struct ExitNodeView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("No exit nodes available")
                                 .foregroundColor(.secondary)
-                            Text("To use an exit node, a device on your network must advertise itself as one. Configure exit nodes in the Tailscale admin console.")
+                            Text("To use an exit node, another device must advertise itself as one. Configure exit nodes in your control plane admin console.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -187,7 +187,6 @@ struct ExitNodeRow: View {
 
 // Note: RunAsExitNodeView removed - iOS does not support running as an exit node.
 // iOS devices can consume exit nodes, but do not advertise as exit nodes here.
-// See: https://tailscale.com/kb/1103/exit-nodes
 
 /// Warning row component (kept for potential reuse).
 struct WarningRow: View {

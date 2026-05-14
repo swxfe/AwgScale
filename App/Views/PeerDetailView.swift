@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Detailed view for a peer node.
-/// Displays all available information about a device on the Tailscale network.
+/// Displays all available information about a device on the overlay network.
 struct PeerDetailView: View {
     let peer: PeerNode
     @EnvironmentObject var appState: AppState

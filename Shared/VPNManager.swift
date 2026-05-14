@@ -40,7 +40,7 @@ class VPNManager: ObservableObject {
     func loadManager() async {
         do {
             let managers = try await NETunnelProviderManager.loadAllFromPreferences()
-            if let existing = managers.first(where: isTailscaleManager) {
+            if let existing = managers.first(where: isAwgScaleManager) {
                 manager = existing
                 let protocolChanged = configureTunnelProtocol(existing)
                 needsConfigurationInstall = !existing.isEnabled || protocolChanged
@@ -89,14 +89,14 @@ class VPNManager: ObservableObject {
         return status
     }
 
-    private func isTailscaleManager(_ manager: NETunnelProviderManager) -> Bool {
+    private func isAwgScaleManager(_ manager: NETunnelProviderManager) -> Bool {
         guard let proto = manager.protocolConfiguration as? NETunnelProviderProtocol else { return false }
         return proto.providerBundleIdentifier == IPCConstants.packetTunnelBundleID
     }
 
     private func createManager() -> NETunnelProviderManager {
         let manager = NETunnelProviderManager()
-        manager.localizedDescription = "Tailscale"
+        manager.localizedDescription = "AwgScale"
 
         let proto = NETunnelProviderProtocol()
         configureTunnelProtocol(proto)
@@ -119,8 +119,8 @@ class VPNManager: ObservableObject {
             proto.providerBundleIdentifier = IPCConstants.packetTunnelBundleID
             changed = true
         }
-        if proto.serverAddress != "Tailscale" {
-            proto.serverAddress = "Tailscale"
+        if proto.serverAddress != "AwgScale" {
+            proto.serverAddress = "AwgScale"
             changed = true
         }
         if proto.enforceRoutes {
@@ -282,6 +282,17 @@ class VPNManager: ObservableObject {
     func startLoginInteractive() async throws -> IPCResponse {
         let request = IPCRequest(command: .startLoginInteractive)
         return try await sendIPCRequest(request)
+    }
+
+    /// Tell the extension that a user-requested stop is about to happen so it can
+    /// suppress final tunnel-settings churn while iOS tears the provider down.
+    func prepareToDisconnect() async {
+        let request = IPCRequest(command: .prepareToStop)
+        do {
+            _ = try await sendIPCRequest(request)
+        } catch {
+            NSLog("Failed to prepare PacketTunnel for stop: \(error)")
+        }
     }
 
     // MARK: - Status Observation

@@ -1,4 +1,4 @@
-name: Tailscale
+name: AwgScale
 options:
   bundleIdPrefix: top.yesican
   deploymentTarget:
@@ -12,7 +12,7 @@ settings:
     DEVELOPMENT_TEAM: ""
 
 targets:
-  Tailscale:
+  AwgScale:
     type: application
     platform: iOS
     sources:
@@ -27,17 +27,17 @@ targets:
         embed: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: top.yesican.tailscale
+        PRODUCT_BUNDLE_IDENTIFIER: top.yesican.awgscale
         INFOPLIST_FILE: App/Info.plist
-        CODE_SIGN_ENTITLEMENTS: App/Tailscale.entitlements
+        CODE_SIGN_ENTITLEMENTS: App/AwgScale.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     entitlements:
-      path: App/Tailscale.entitlements
+      path: App/AwgScale.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.top.yesican.tailscale
+          - group.top.yesican.awgscale
         keychain-access-groups:
-          - $(AppIdentifierPrefix)top.yesican.tailscale.shared
+          - $(AppIdentifierPrefix)top.yesican.awgscale.shared
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
 
@@ -55,41 +55,41 @@ targets:
         embed: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: top.yesican.tailscale.network-extension
+        PRODUCT_BUNDLE_IDENTIFIER: top.yesican.awgscale.network-extension
         INFOPLIST_FILE: PacketTunnel/Info.plist
         CODE_SIGN_ENTITLEMENTS: PacketTunnel/PacketTunnel.entitlements
     entitlements:
       path: PacketTunnel/PacketTunnel.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.top.yesican.tailscale
+          - group.top.yesican.awgscale
         keychain-access-groups:
-          - $(AppIdentifierPrefix)top.yesican.tailscale.shared
+          - $(AppIdentifierPrefix)top.yesican.awgscale.shared
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
 
-  TailscaleTests:
+  AwgScaleTests:
     type: bundle.unit-test
     platform: iOS
     sources:
       - path: Tests
       - path: Shared
     dependencies:
-      - target: Tailscale
+      - target: AwgScale
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: top.yesican.tailscale.tests
+        PRODUCT_BUNDLE_IDENTIFIER: top.yesican.awgscale.tests
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:
-  Tailscale:
+  AwgScale:
     build:
       targets:
-        Tailscale: all
+        AwgScale: all
         PacketTunnel: all
     run:
       config: Debug
     test:
       config: Debug
       targets:
-        - TailscaleTests
+        - AwgScaleTests

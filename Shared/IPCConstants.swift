@@ -12,10 +12,10 @@ import Foundation
 /// - Darwin Notifications: lightweight cross-process "state changed" signals
 /// - Keychain (shared access group): encrypted state persistence
 enum IPCConstants {
-    static let appBundleID = "top.yesican.tailscale"
-    static let packetTunnelBundleID = "top.yesican.tailscale.network-extension"
-    static let appGroupID = "group.top.yesican.tailscale"
-    static let keychainGroupID = "top.yesican.tailscale.shared"
+    static let appBundleID = "top.yesican.awgscale"
+    static let packetTunnelBundleID = "top.yesican.awgscale.network-extension"
+    static let appGroupID = "group.top.yesican.awgscale"
+    static let keychainGroupID = "top.yesican.awgscale.shared"
 
     // MARK: - App Group UserDefaults keys (Extension writes, App reads)
 
@@ -44,7 +44,7 @@ enum IPCConstants {
 
     /// Posted by Extension when ipn state/prefs/netmap changes.
     /// App should re-read shared UserDefaults when receiving this.
-    static let notifyStateChanged = "top.yesican.tailscale.state-changed" as CFString
+    static let notifyStateChanged = "top.yesican.awgscale.state-changed" as CFString
 }
 
 // MARK: - Shared Defaults
@@ -64,6 +64,7 @@ struct IPCRequest: Codable {
     enum Command: String, Codable {
         case callLocalAPI
         case startLoginInteractive
+        case prepareToStop
     }
 
     let command: Command

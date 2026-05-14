@@ -1,7 +1,7 @@
 import Foundation
 import UserNotifications
 
-/// Notification manager for Tailscale iOS app.
+/// Notification manager for AwgScale.
 /// Handles key expiration reminders, health warnings, and file transfer notifications.
 @MainActor
 class NotificationManager: ObservableObject {
@@ -134,7 +134,7 @@ class NotificationManager: ObservableObject {
         
         let content = UNMutableNotificationContent()
         content.title = "Key Expiring Soon"
-        content.body = "Your Tailscale key expires in \(daysWarning) days. Renew to maintain access."
+        content.body = "Your device key expires in \(daysWarning) days. Renew to maintain access."
         content.sound = .default
         content.categoryIdentifier = Self.keyExpiryCategory
         
@@ -155,7 +155,7 @@ class NotificationManager: ObservableObject {
         
         let content = UNMutableNotificationContent()
         content.title = "Key Expired"
-        content.body = "Your Tailscale key has expired. Please re-authenticate to restore access."
+        content.body = "Your device key has expired. Please re-authenticate to restore access."
         content.sound = .default
         content.categoryIdentifier = Self.reauthCategory
         
