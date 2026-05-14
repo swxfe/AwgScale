@@ -13,7 +13,7 @@ struct PeerDetailView: View {
     }
     
     private var isCurrentExitNode: Bool {
-        guard let exitID = appState.prefs?.ExitNodeID else { return false }
+        guard let exitID = appState.effectiveExitNodeID else { return false }
         return peer.id == exitID
     }
     
@@ -90,20 +90,34 @@ struct PeerDetailView: View {
                         } label: {
                             HStack {
                                 Spacer()
-                                Text("Stop Using as Exit Node")
+                                if appState.isUpdatingExitNode && appState.pendingExitNodeID == "" {
+                                    ProgressView()
+                                        .padding(.trailing, 8)
+                                    Text("Stopping...")
+                                } else {
+                                    Text("Stop Using as Exit Node")
+                                }
                                 Spacer()
                             }
                         }
+                        .disabled(appState.isUpdatingExitNode)
                     } else if peer.online {
                         Button {
                             appState.setExitNode(peer)
                         } label: {
                             HStack {
                                 Spacer()
-                                Text("Use as Exit Node")
+                                if appState.isUpdatingExitNode && appState.pendingExitNodeID == peer.id {
+                                    ProgressView()
+                                        .padding(.trailing, 8)
+                                    Text("Updating...")
+                                } else {
+                                    Text("Use as Exit Node")
+                                }
                                 Spacer()
                             }
                         }
+                        .disabled(appState.isUpdatingExitNode)
                     }
                 } header: {
                     Text("Exit Node")
@@ -385,6 +399,10 @@ struct PingView: View {
             pingResults = [PingResult(seq: 1, error: "No IPv4 address")]
             return
         }
+        guard canStartPing(vpn: vpn) else {
+            pingResults = [PingResult(seq: 1, error: "VPN is not ready")]
+            return
+        }
         
         isPinging = true
         pingResults = []
@@ -396,8 +414,18 @@ struct PingView: View {
                 pingCount = seq
                 
                 do {
+                    let canContinue = await MainActor.run {
+                        canStartPing(vpn: vpn)
+                    }
+                    guard canContinue else {
+                        await MainActor.run {
+                            pingResults.append(PingResult(seq: seq, error: "VPN stopped while pinging"))
+                        }
+                        break
+                    }
+
                     let endpoint = "/localapi/v0/ping?ip=\(targetIP)&type=disco"
-                    let resp = try await vpn.callLocalAPI(method: "POST", endpoint: endpoint, timeout: 3000)
+                    let resp = try await vpn.callLocalAPI(method: "POST", endpoint: endpoint, timeout: 10000)
                     let result = try resp.decodedBody(PingAPIResponse.self, endpoint: endpoint)
                     if let error = result.Err, !error.isEmpty {
                         await MainActor.run {
@@ -426,6 +454,13 @@ struct PingView: View {
                 isPinging = false
             }
         }
+    }
+
+    private func canStartPing(vpn: VPNManager) -> Bool {
+        appState.pendingWantRunning == nil
+            && !appState.isUpdatingExitNode
+            && appState.ipnState == .running
+            && vpn.isTunnelActive
     }
 
     private func latencyColor(_ ms: Double) -> Color {

@@ -1,6 +1,7 @@
 package libtailscale
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -23,6 +24,11 @@ var tailscaleServiceDNSServers = map[string]bool{
 	"fd7a:115c:a1e0::53": true,
 }
 
+var coreTunnelRoutes = []netip.Prefix{
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("fd7a:115c:a1e0::/48"),
+}
+
 // TunnelConfig is the JSON-serializable tunnel configuration pushed to Swift.
 // It contains everything NEPacketTunnelProvider needs to call
 // setTunnelNetworkSettings.
@@ -43,9 +49,26 @@ type TunnelConfig struct {
 
 // tunnelConfigManager holds the callback to Swift and serializes config updates.
 type tunnelConfigManager struct {
-	mu             sync.Mutex
-	cb             TunnelConfigCallback
-	lastConfigJSON []byte
+	mu                        sync.Mutex
+	cb                        TunnelConfigCallback
+	lastConfigJSON            []byte
+	defaultRouteExcludeRoutes func() []netip.Prefix
+}
+
+func (m *tunnelConfigManager) setDefaultRouteExcludeRoutes(fn func() []netip.Prefix) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.defaultRouteExcludeRoutes = fn
+}
+
+func (m *tunnelConfigManager) getDefaultRouteExcludeRoutes() []netip.Prefix {
+	m.mu.Lock()
+	fn := m.defaultRouteExcludeRoutes
+	m.mu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	return fn()
 }
 
 func (m *tunnelConfigManager) setCallback(cb TunnelConfigCallback) {
@@ -91,13 +114,23 @@ func (m *tunnelConfigManager) onConfigUpdate(rcfg *router.Config, dcfg *dns.OSCo
 	for _, route := range rcfg.Routes {
 		tc.Routes = append(tc.Routes, route.Masked().String())
 	}
+	hasDefaultRoute := hasDefaultRoute(tc.Routes)
+	if hasDefaultRoute {
+		tc.Routes = appendMissingCoreTunnelRoutes(tc.Routes)
+	}
 
 	// Excluded routes (routes that should stay outside the tunnel).
 	for _, route := range rcfg.LocalRoutes {
-		if shouldSkipExcludeRoute(route) {
-			continue
+		tc.ExcludeRoutes = appendExcludeRoute(tc.ExcludeRoutes, route)
+	}
+	if hasDefaultRoute {
+		underlayExcludeStart := len(tc.ExcludeRoutes)
+		for _, route := range m.getDefaultRouteExcludeRoutes() {
+			tc.ExcludeRoutes = appendExcludeRoute(tc.ExcludeRoutes, route)
 		}
-		tc.ExcludeRoutes = append(tc.ExcludeRoutes, route.Masked().String())
+		if len(tc.ExcludeRoutes) > underlayExcludeStart {
+			log.Printf("exit node: excluding underlay routes from NetworkExtension tunnel: %v", tc.ExcludeRoutes[underlayExcludeStart:])
+		}
 	}
 
 	// DNS
@@ -112,15 +145,11 @@ func (m *tunnelConfigManager) onConfigUpdate(rcfg *router.Config, dcfg *dns.OSCo
 			tc.DNSMatchDomains = append(tc.DNSMatchDomains, d.WithoutTrailingDot())
 		}
 	}
-
-	// Fallback: if no DNS servers from Go, use MagicDNS default
-	if len(tc.DNSServers) == 0 {
-		tc.DNSServers = []string{"100.100.100.100"}
-	}
-	if hasDefaultRoute(tc.Routes) && dnsServersAreTailscaleServiceIPs(tc.DNSServers) {
+	if hasDefaultRoute && dnsServersAreTailscaleServiceIPs(tc.DNSServers) {
 		log.Printf("exit node: using public DNS servers for NetworkExtension DNS to avoid PeerAPI DNS proxy timeout")
 		tc.DNSServers = append([]string(nil), exitNodePublicDNSServers...)
 	}
+
 	log.Printf("tunnel config: localAddrs=%d routes=%d excludeRoutes=%d dnsServers=%d searchDomains=%d matchDomains=%d mtu=%d hasDefaultRoute=%t",
 		len(tc.LocalAddresses),
 		len(tc.Routes),
@@ -129,7 +158,7 @@ func (m *tunnelConfigManager) onConfigUpdate(rcfg *router.Config, dcfg *dns.OSCo
 		len(tc.DNSDomains),
 		len(tc.DNSMatchDomains),
 		tc.MTU,
-		hasDefaultRoute(tc.Routes),
+		hasDefaultRoute,
 	)
 
 	configJSON, err := json.Marshal(tc)
@@ -137,6 +166,10 @@ func (m *tunnelConfigManager) onConfigUpdate(rcfg *router.Config, dcfg *dns.OSCo
 		return fmt.Errorf("marshal tunnel config: %w", err)
 	}
 	m.mu.Lock()
+	if bytes.Equal(m.lastConfigJSON, configJSON) {
+		m.mu.Unlock()
+		return nil
+	}
 	m.lastConfigJSON = append([]byte(nil), configJSON...)
 	cb := m.cb
 
@@ -157,6 +190,19 @@ func shouldSkipExcludeRoute(route netip.Prefix) bool {
 	return route.Addr().IsLoopback()
 }
 
+func appendExcludeRoute(routes []string, route netip.Prefix) []string {
+	if shouldSkipExcludeRoute(route) {
+		return routes
+	}
+	routeStr := route.Masked().String()
+	for _, existing := range routes {
+		if existing == routeStr {
+			return routes
+		}
+	}
+	return append(routes, routeStr)
+}
+
 func hasDefaultRoute(routes []string) bool {
 	for _, route := range routes {
 		prefix, err := netip.ParsePrefix(route)
@@ -169,6 +215,21 @@ func hasDefaultRoute(routes []string) bool {
 		}
 	}
 	return false
+}
+
+func appendMissingCoreTunnelRoutes(routes []string) []string {
+	seen := make(map[string]bool, len(routes)+len(coreTunnelRoutes))
+	for _, route := range routes {
+		seen[route] = true
+	}
+	for _, route := range coreTunnelRoutes {
+		routeStr := route.String()
+		if !seen[routeStr] {
+			routes = append(routes, routeStr)
+			seen[routeStr] = true
+		}
+	}
+	return routes
 }
 
 func dnsServersAreTailscaleServiceIPs(servers []string) bool {

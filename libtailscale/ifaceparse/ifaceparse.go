@@ -59,7 +59,7 @@ func ParseInterfacesJSONAsNetmon(b []byte) ([]netmon.Interface, ParseStats, erro
 	for _, it := range in {
 		st.IfacesTotal++
 
-		if it.Name == "" {
+		if it.Name == "" || shouldSkipInterfaceName(it.Name) {
 			st.IfacesSkipped++
 			continue
 		}
@@ -105,6 +105,10 @@ func ParseInterfacesJSONAsNetmon(b []byte) ([]netmon.Interface, ParseStats, erro
 	}
 
 	return out, st, nil
+}
+
+func shouldSkipInterfaceName(name string) bool {
+	return strings.HasPrefix(name, "utun")
 }
 
 func (a addrJSON) NetAddr() (net.Addr, error) {

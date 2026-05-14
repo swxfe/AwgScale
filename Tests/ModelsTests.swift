@@ -15,6 +15,15 @@ final class ModelsTests: XCTestCase {
         XCTAssertNil(IpnState(rawValue: 99))
     }
 
+    func testIpnStateBackendSnapshotClearing() {
+        XCTAssertFalse(IpnState.noState.clearsBackendSnapshot)
+        XCTAssertTrue(IpnState.needsLogin.clearsBackendSnapshot)
+        XCTAssertTrue(IpnState.needsMachineAuth.clearsBackendSnapshot)
+        XCTAssertFalse(IpnState.stopped.clearsBackendSnapshot)
+        XCTAssertFalse(IpnState.starting.clearsBackendSnapshot)
+        XCTAssertFalse(IpnState.running.clearsBackendSnapshot)
+    }
+
     // MARK: - Notify Decoding
 
     func testDecodeNotifyWithState() throws {

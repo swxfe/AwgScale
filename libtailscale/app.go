@@ -219,6 +219,7 @@ func (a *App) newBackend(dataDir string, appCtx AppContext, store *stateStore) (
 	}
 	b.netMon = netMon
 	b.setupLogs(dataDir, logID, logf, sys.HealthTracker.Get())
+	a.tunnelConfigMgr.setDefaultRouteExcludeRoutes(b.defaultRouteExcludeRoutes)
 
 	dialer := new(tsdial.Dialer)
 	vf := &VPNFacade{
@@ -311,6 +312,60 @@ func (a *App) newBackend(dataDir string, appCtx AppContext, store *stateStore) (
 	return b, nil
 }
 
+// defaultRouteExcludeRoutes returns underlay routes that NEPacketTunnelProvider
+// must keep outside the tunnel. When the tunnel installs a default route (exit
+// node), Tailscale's local.go also adds the on-link LAN subnet to rs.Routes to
+// prevent LAN leaks. On iOS that captures the LAN gateway into utun; once the
+// ARP/ND cache expires, magicsock can no longer resolve the next hop. Excluding
+// the full underlay subnet keeps gateway resolution on en0/pdp_ip0.
+//
+// iOS also does not reliably let IP_BOUND_IF override an NE default route for
+// UDP destinations on the public internet, so direct peer endpoints need exact
+// host-route exclusions too. This matches WireGuard-style NetworkExtension
+// routing: the encrypted endpoint stays outside the full-tunnel default route,
+// while decrypted traffic still follows the tunnel.
+func (b *backend) defaultRouteExcludeRoutes() []netip.Prefix {
+	if b == nil || b.netMon == nil {
+		return nil
+	}
+	var out []netip.Prefix
+	seen := make(map[netip.Prefix]bool)
+	add := func(p netip.Prefix) {
+		if !p.IsValid() {
+			return
+		}
+		addr := p.Addr()
+		if addr.IsLoopback() || addr.IsUnspecified() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsMulticast() {
+			return
+		}
+		if seen[p] {
+			return
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	if state := b.netMon.InterfaceState(); state != nil && state.DefaultRouteInterface != "" {
+		for _, pfx := range state.InterfaceIPs[state.DefaultRouteInterface] {
+			add(pfx.Masked())
+		}
+	}
+	if gw, _, ok := b.netMon.GatewayAndSelfIP(); ok && gw.IsValid() && !gw.IsLoopback() {
+		add(netip.PrefixFrom(gw, gw.BitLen()))
+	}
+	if b.backend != nil {
+		if nm := b.backend.NetMapWithPeers(); nm != nil {
+			for _, peer := range nm.Peers {
+				endpoints := peer.Endpoints()
+				for i := 0; i < endpoints.Len(); i++ {
+					addr := endpoints.At(i).Addr().Unmap()
+					add(netip.PrefixFrom(addr, addr.BitLen()))
+				}
+			}
+		}
+	}
+	return out
+}
+
 func (a *App) osVersion() string {
 	v, err := a.appCtx.GetOSVersion()
 	if err != nil {
@@ -345,6 +400,32 @@ func (a *App) SetPacketCallback(cb PacketCallback) {
 	if b != nil && b.tunDev != nil {
 		b.tunDev.SetPacketCallback(cb)
 	}
+}
+
+func (a *App) RebindUnderlay(why string) {
+	a.mu.Lock()
+	b := a.backendState
+	a.mu.Unlock()
+	if b == nil {
+		return
+	}
+	if b.netMon != nil {
+		b.netMon.InjectEvent()
+	}
+	if b.sys == nil {
+		return
+	}
+	magicConn, ok := b.sys.MagicSock.GetOK()
+	if !ok || magicConn == nil {
+		return
+	}
+	// Avoid magicConn.Rebind() here: recreating the underlay UDP socket
+	// also tears down the DERP connection. On flaky carrier UDP paths this
+	// turns a recoverable peer stall into a full underlay outage. ReSTUN
+	// alone lets magicsock re-discover endpoints and naturally fall back
+	// to DERP without dropping the existing sockets.
+	log.Printf("magicsock: iOS underlay ReSTUN requested: %s", why)
+	magicConn.ReSTUN("ios-underlay-" + why)
 }
 
 func (a *App) Stop() {

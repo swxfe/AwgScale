@@ -20,6 +20,7 @@ class VPNManager: ObservableObject {
 
     private var manager: NETunnelProviderManager?
     private var statusObserver: NSObjectProtocol?
+    private var needsConfigurationInstall = false
 
     init() {
         Task {
@@ -39,13 +40,21 @@ class VPNManager: ObservableObject {
     func loadManager() async {
         do {
             let managers = try await NETunnelProviderManager.loadAllFromPreferences()
-            if let existing = managers.first(where: isTailscaleManager) ?? managers.first {
+            if let existing = managers.first(where: isTailscaleManager) {
                 manager = existing
+                let protocolChanged = configureTunnelProtocol(existing)
+                needsConfigurationInstall = !existing.isEnabled || protocolChanged
+                observeStatus()
+                vpnStatus = existing.connection.status
+                if protocolChanged {
+                    try await saveProtocolConfigurationRepair(restartIfActive: isTunnelActive)
+                }
             } else {
                 manager = createManager()
+                needsConfigurationInstall = true
+                observeStatus()
+                vpnStatus = manager?.connection.status ?? .invalid
             }
-            observeStatus()
-            vpnStatus = manager?.connection.status ?? .invalid
         } catch {
             NSLog("Failed to load VPN managers: \(error)")
         }
@@ -57,7 +66,13 @@ class VPNManager: ObservableObject {
         } else if let manager = manager {
             do {
                 try await manager.loadFromPreferences()
+                let protocolChanged = configureTunnelProtocol(manager)
+                needsConfigurationInstall = !manager.isEnabled || protocolChanged
                 observeStatus()
+                vpnStatus = manager.connection.status
+                if protocolChanged {
+                    try await saveProtocolConfigurationRepair(restartIfActive: isTunnelActive)
+                }
             } catch {
                 NSLog("Failed to refresh VPN manager: \(error)")
             }
@@ -67,9 +82,16 @@ class VPNManager: ObservableObject {
         return vpnStatus
     }
 
+    @discardableResult
+    func updateStatusFromConnection() -> NEVPNStatus {
+        let status = manager?.connection.status ?? vpnStatus
+        vpnStatus = status
+        return status
+    }
+
     private func isTailscaleManager(_ manager: NETunnelProviderManager) -> Bool {
         guard let proto = manager.protocolConfiguration as? NETunnelProviderProtocol else { return false }
-        return proto.providerBundleIdentifier == "com.tailscale.ipn.ios.network-extension"
+        return proto.providerBundleIdentifier == IPCConstants.packetTunnelBundleID
     }
 
     private func createManager() -> NETunnelProviderManager {
@@ -77,12 +99,84 @@ class VPNManager: ObservableObject {
         manager.localizedDescription = "Tailscale"
 
         let proto = NETunnelProviderProtocol()
-        proto.providerBundleIdentifier = "com.tailscale.ipn.ios.network-extension"
-        proto.serverAddress = "Tailscale"
+        configureTunnelProtocol(proto)
         manager.protocolConfiguration = proto
 
         manager.isEnabled = true
         return manager
+    }
+
+    @discardableResult
+    private func configureTunnelProtocol(_ manager: NETunnelProviderManager) -> Bool {
+        guard let proto = manager.protocolConfiguration as? NETunnelProviderProtocol else { return false }
+        return configureTunnelProtocol(proto)
+    }
+
+    @discardableResult
+    private func configureTunnelProtocol(_ proto: NETunnelProviderProtocol) -> Bool {
+        var changed = false
+        if proto.providerBundleIdentifier != IPCConstants.packetTunnelBundleID {
+            proto.providerBundleIdentifier = IPCConstants.packetTunnelBundleID
+            changed = true
+        }
+        if proto.serverAddress != "Tailscale" {
+            proto.serverAddress = "Tailscale"
+            changed = true
+        }
+        if proto.enforceRoutes {
+            proto.enforceRoutes = false
+            changed = true
+        }
+        if proto.includeAllNetworks {
+            proto.includeAllNetworks = false
+            changed = true
+        }
+        if proto.excludeLocalNetworks {
+            proto.excludeLocalNetworks = false
+            changed = true
+        }
+        return changed
+    }
+
+    private func saveProtocolConfigurationRepair(restartIfActive: Bool) async throws {
+        guard let manager = manager else {
+            throw VPNError.noManager
+        }
+
+        let shouldRestart = restartIfActive && isTunnelActive
+        try await manager.saveToPreferences()
+        try await manager.loadFromPreferences()
+        needsConfigurationInstall = !manager.isEnabled
+        observeStatus()
+        vpnStatus = manager.connection.status
+
+        if shouldRestart {
+            try await restartTunnelAfterConfigurationChange()
+        }
+    }
+
+    private func restartTunnelAfterConfigurationChange() async throws {
+        guard let manager = manager else {
+            throw VPNError.noManager
+        }
+
+        manager.connection.stopVPNTunnel()
+        await waitForTunnelStopped()
+        guard manager.isEnabled else { return }
+        try manager.connection.startVPNTunnel()
+        updateStatusFromConnection()
+    }
+
+    private func waitForTunnelStopped() async {
+        for _ in 0..<30 {
+            switch updateStatusFromConnection() {
+            case .connected, .connecting, .reasserting, .disconnecting:
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            default:
+                return
+            }
+        }
+        updateStatusFromConnection()
     }
 
     /// Save VPN configuration. This will trigger the system VPN permission dialog on first use.
@@ -90,9 +184,12 @@ class VPNManager: ObservableObject {
         guard let manager = manager else {
             throw VPNError.noManager
         }
+        manager.isEnabled = true
         try await manager.saveToPreferences()
         try await manager.loadFromPreferences()
+        needsConfigurationInstall = false
         observeStatus()
+        vpnStatus = manager.connection.status
     }
 
     // MARK: - Connect / Disconnect
@@ -115,19 +212,31 @@ class VPNManager: ObservableObject {
             await loadManager()
         }
 
-        switch vpnStatus {
-        case .connected, .connecting, .reasserting:
+        let shouldInstallConfiguration = needsConfigurationInstall || manager?.isEnabled != true
+        let shouldRestartAfterConfigurationInstall = shouldInstallConfiguration && isTunnelActive
+        if shouldInstallConfiguration {
+            try await installVPNConfiguration()
+        }
+
+        if shouldRestartAfterConfigurationInstall {
+            try await restartTunnelAfterConfigurationChange()
             return
+        }
+
+        switch updateStatusFromConnection() {
+        case .connected:
+            return
+        case .connecting, .reasserting:
+            if !shouldInstallConfiguration { return }
         default:
             break
         }
-
-        try await installVPNConfiguration()
-        try manager?.connection.startVPNTunnel()
+        try await startVPNTunnelWithRetryIfNeeded()
     }
 
     func disconnect() {
         manager?.connection.stopVPNTunnel()
+        updateStatusFromConnection()
     }
 
     // MARK: - IPC: App → Extension
@@ -190,6 +299,59 @@ class VPNManager: ObservableObject {
                 self?.vpnStatus = self?.manager?.connection.status ?? .invalid
             }
         }
+    }
+
+    private func startVPNTunnelWithRetryIfNeeded() async throws {
+        guard let manager = manager else {
+            throw VPNError.noManager
+        }
+
+        do {
+            try manager.connection.startVPNTunnel()
+        } catch {
+            let status = updateStatusFromConnection()
+            if status == .connecting || status == .reasserting {
+                NSLog("VPN start requested while status is \(status.rawValue); retrying after stop: \(error)")
+                try await retryTunnelStart(manager)
+                return
+            }
+            throw error
+        }
+
+        updateStatusFromConnection()
+        let status = await waitForTunnelStartProgress(timeoutSeconds: 10)
+        if status == .connecting || status == .reasserting {
+            NSLog("VPN start remained in status \(status.rawValue); retrying tunnel start")
+            try await retryTunnelStart(manager)
+        }
+    }
+
+    private func retryTunnelStart(_ manager: NETunnelProviderManager) async throws {
+        manager.connection.stopVPNTunnel()
+        await waitForTunnelStopped()
+        try await manager.loadFromPreferences()
+        needsConfigurationInstall = !manager.isEnabled
+        observeStatus()
+        vpnStatus = manager.connection.status
+        guard manager.isEnabled else { return }
+        try manager.connection.startVPNTunnel()
+        updateStatusFromConnection()
+    }
+
+    private func waitForTunnelStartProgress(timeoutSeconds: TimeInterval) async -> NEVPNStatus {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            let status = updateStatusFromConnection()
+            switch status {
+            case .connected, .disconnected, .disconnecting, .invalid:
+                return status
+            case .connecting, .reasserting:
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            @unknown default:
+                return status
+            }
+        }
+        return updateStatusFromConnection()
     }
 }
 

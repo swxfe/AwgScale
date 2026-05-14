@@ -26,7 +26,7 @@ struct ExitNodeView: View {
     
     /// Currently selected exit node ID.
     private var currentExitNodeID: String? {
-        appState.prefs?.ExitNodeID
+        appState.effectiveExitNodeID
     }
     
     /// Currently selected exit node (if any).
@@ -54,11 +54,18 @@ struct ExitNodeView: View {
                             }
                         }
                         Spacer()
-                        Button("Stop") {
+                        Button {
                             appState.clearExitNode()
+                        } label: {
+                            if appState.isUpdatingExitNode && appState.pendingExitNodeID == "" {
+                                ProgressView()
+                            } else {
+                                Text("Stop")
+                            }
                         }
                         .buttonStyle(.bordered)
                         .tint(.red)
+                        .disabled(appState.isUpdatingExitNode)
                     }
                 } else {
                     HStack {
@@ -78,9 +85,10 @@ struct ExitNodeView: View {
             if currentExitNode != nil {
                 Section {
                     Toggle("Allow LAN Access", isOn: Binding(
-                        get: { appState.prefs?.ExitNodeAllowLANAccess ?? false },
+                        get: { appState.effectiveExitNodeAllowLANAccess },
                         set: { appState.setExitNodeAllowLANAccess($0) }
                     ))
+                    .disabled(appState.isUpdatingExitNode)
                 } footer: {
                     Text("Allow access to local network devices when using an exit node.")
                 }
@@ -106,6 +114,8 @@ struct ExitNodeView: View {
                         ExitNodeRow(
                             peer: peer,
                             isSelected: peer.id == currentExitNodeID,
+                            isUpdating: appState.isUpdatingExitNode && appState.pendingExitNodeID == peer.id,
+                            isDisabled: appState.isUpdatingExitNode,
                             onSelect: {
                                 appState.setExitNode(peer)
                                 dismiss()
@@ -130,6 +140,8 @@ struct ExitNodeView: View {
 struct ExitNodeRow: View {
     let peer: PeerNode
     let isSelected: Bool
+    let isUpdating: Bool
+    let isDisabled: Bool
     let onSelect: () -> Void
     
     var body: some View {
@@ -158,7 +170,9 @@ struct ExitNodeRow: View {
                 
                 Spacer()
                 
-                if isSelected {
+                if isUpdating {
+                    ProgressView()
+                } else if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.accentColor)
                 }
@@ -166,7 +180,7 @@ struct ExitNodeRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!peer.online)
+        .disabled(!peer.online || isDisabled)
         .opacity(peer.online ? 1.0 : 0.5)
     }
 }

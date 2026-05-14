@@ -1,11 +1,11 @@
 package libtailscale
 
 import (
-	"errors"
 	"io"
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/LiuTangLei/wireguard-go/tun"
 )
@@ -13,8 +13,6 @@ import (
 const defaultMTU = 1280
 
 const tunBatchSize = 32
-
-var errInboundQueueFull = errors.New("tun inbound queue full")
 
 // pendingTUN implements tun.Device for the iOS backend. Swift reads packets
 // from NEPacketTunnelFlow and injects them with InjectInboundPacket; packets
@@ -29,6 +27,10 @@ type pendingTUN struct {
 
 	packetMu sync.RWMutex
 	packetCB PacketCallback
+
+	dropMu             sync.Mutex
+	droppedInbound     uint64
+	lastInboundDropLog time.Time
 }
 
 func newPendingTUN() *pendingTUN {
@@ -131,8 +133,24 @@ func (t *pendingTUN) InjectInboundPacket(packet []byte) error {
 	case t.inbound <- packet:
 		return nil
 	default:
-		log.Printf("TUN inbound queue full packetBytes=%d queueDepth=%d", len(packet), len(t.inbound))
-		return errInboundQueueFull
+		t.logInboundQueueFull(len(packet))
+		return nil
+	}
+}
+
+func (t *pendingTUN) logInboundQueueFull(packetBytes int) {
+	t.dropMu.Lock()
+	t.droppedInbound++
+	dropped := t.droppedInbound
+	now := time.Now()
+	shouldLog := dropped == 1 || dropped%256 == 0 || now.Sub(t.lastInboundDropLog) >= 5*time.Second
+	if shouldLog {
+		t.lastInboundDropLog = now
+	}
+	t.dropMu.Unlock()
+
+	if shouldLog {
+		log.Printf("TUN inbound queue full; dropping packet packetBytes=%d queueDepth=%d dropped=%d", packetBytes, len(t.inbound), dropped)
 	}
 }
 

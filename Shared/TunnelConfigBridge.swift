@@ -67,3 +67,13 @@ func isIPv4DefaultRoute(address: String, prefixLen: Int) -> Bool {
 func isIPv6DefaultRoute(address: String, prefixLen: Int) -> Bool {
     address == "::" && prefixLen == 0
 }
+
+func tunnelConfigHasDefaultRoute(_ routes: [String]) -> Bool {
+    routes.contains { route in
+        guard let parsed = parseCIDR(route) else { return false }
+        if parsed.address.contains(":") {
+            return isIPv6DefaultRoute(address: parsed.address, prefixLen: parsed.prefixLen)
+        }
+        return isIPv4DefaultRoute(address: parsed.address, prefixLen: parsed.prefixLen)
+    }
+}

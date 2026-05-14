@@ -12,8 +12,10 @@ import Foundation
 /// - Darwin Notifications: lightweight cross-process "state changed" signals
 /// - Keychain (shared access group): encrypted state persistence
 enum IPCConstants {
-    static let appGroupID = "group.com.tailscale.ipn.ios"
-    static let keychainGroupID = "com.tailscale.ipn.ios.shared"
+    static let appBundleID = "top.yesican.tailscale"
+    static let packetTunnelBundleID = "top.yesican.tailscale.network-extension"
+    static let appGroupID = "group.top.yesican.tailscale"
+    static let keychainGroupID = "top.yesican.tailscale.shared"
 
     // MARK: - App Group UserDefaults keys (Extension writes, App reads)
 
@@ -33,6 +35,8 @@ enum IPCConstants {
     static let keySelfNodeJSON = "self_node_json"
     /// Last error from the backend.
     static let keyLastError = "last_error"
+    /// Whether the latest applied PacketTunnel settings include a default route.
+    static let keyTunnelHasDefaultRoute = "tunnel_has_default_route"
     /// Current profile ID.
     static let keyCurrentProfileID = "current_profile_id"
 
@@ -40,7 +44,7 @@ enum IPCConstants {
 
     /// Posted by Extension when ipn state/prefs/netmap changes.
     /// App should re-read shared UserDefaults when receiving this.
-    static let notifyStateChanged = "com.tailscale.ipn.ios.state-changed" as CFString
+    static let notifyStateChanged = "top.yesican.tailscale.state-changed" as CFString
 }
 
 // MARK: - Shared Defaults

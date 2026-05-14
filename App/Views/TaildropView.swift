@@ -153,7 +153,7 @@ struct TaildropView: View {
     }
 
     private func loadLocalIncomingFiles() -> [TaildropFile] {
-        guard let groupContainer = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.tailscale.ipn.ios") else {
+        guard let groupContainer = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: IPCConstants.appGroupID) else {
             return []
         }
         let taildropDir = groupContainer.appendingPathComponent("taildrop", isDirectory: true)
@@ -480,7 +480,7 @@ struct TaildropFile: Identifiable {
         
         // Construct the local file URL from the Taildrop directory
         // Files are stored in App Group container under taildrop/
-        if let groupContainer = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.tailscale.ipn.ios") {
+        if let groupContainer = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: IPCConstants.appGroupID) {
             let taildropDir = groupContainer.appendingPathComponent("taildrop", isDirectory: true)
             self.localURL = taildropDir.appendingPathComponent(response.Name)
         } else {

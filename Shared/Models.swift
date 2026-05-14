@@ -22,6 +22,10 @@ enum IpnState: Int, Codable {
         case .running: return "Connected"
         }
     }
+
+    var clearsBackendSnapshot: Bool {
+        self == .needsLogin || self == .needsMachineAuth
+    }
 }
 
 // MARK: - ipn.Notify

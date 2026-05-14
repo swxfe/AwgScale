@@ -15,13 +15,21 @@ import os
 /// Safe to use in both App and Extension processes (no UIKit dependency).
 class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
 
-    private let logger = Logger(subsystem: "com.tailscale.ipn.ios", category: "go")
+    private let logger = Logger(subsystem: IPCConstants.appBundleID, category: "go")
     private let keychainGroups = GoAppContext.keychainGroupCandidates()
     private let fallbackPreferences = sharedDefaults ?? UserDefaults.standard
 
-    private static func keychainGroupCandidates() -> [String?] {
+    private static func keychainGroupCandidates(includeLegacy: Bool = false) -> [String?] {
         let baseGroup = IPCConstants.keychainGroupID
-        return ["TROLLSTORE.\(baseGroup)", nil]
+        var groups: [String?] = ["TROLLSTORE.\(baseGroup)", nil]
+        if includeLegacy {
+            groups.insert(contentsOf: [
+                baseGroup,
+                "TROLLSTORE.com.tailscale.ipn.ios.shared",
+                "com.tailscale.ipn.ios.shared",
+            ], at: 1)
+        }
+        return groups
     }
 
     private static func withAccessGroup(_ keychainGroup: String?, query: [String: Any]) -> [String: Any] {
@@ -34,17 +42,29 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
 
     static func clearPersistedState() {
         let persistentKeys = persistedStateKeys()
-        let preferences = sharedDefaults ?? UserDefaults.standard
+        let preferenceStores = [sharedDefaults, UserDefaults.standard].compactMap { $0 }
 
-        for key in persistentKeys {
-            preferences.removeObject(forKey: key)
+        for preferences in preferenceStores {
+            for key in persistentKeys {
+                preferences.removeObject(forKey: key)
+            }
+
+            for key in preferences.dictionaryRepresentation().keys where isPersistedStateKey(key) {
+                preferences.removeObject(forKey: key)
+            }
+
+            preferences.synchronize()
         }
 
-        for key in preferences.dictionaryRepresentation().keys where isPersistedStateKey(key) {
-            preferences.removeObject(forKey: key)
-        }
+        for keychainGroup in keychainGroupCandidates(includeLegacy: true) {
+            for account in persistentKeys {
+                let deleteQuery = withAccessGroup(keychainGroup, query: [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrAccount as String: account,
+                ])
+                SecItemDelete(deleteQuery as CFDictionary)
+            }
 
-        for keychainGroup in keychainGroupCandidates() {
             let query = withAccessGroup(keychainGroup, query: [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecReturnAttributes as String: true,
@@ -68,7 +88,13 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
     }
 
     private static func persistedStateKeys() -> [String] {
-        ["privatelogid"]
+        [
+            "privatelogid",
+            "statestore-_machinekey",
+            "statestore-_profiles",
+            "statestore-_current-profile",
+            "statestore-_daemon",
+        ]
     }
 
     private static func isPersistedStateKey(_ key: String) -> Bool {
@@ -133,10 +159,6 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
     func decrypt(fromPref key: String?, error: NSErrorPointer) -> String {
         guard let key = key else { return "" }
 
-        if let fallbackValue = fallbackPreferences.string(forKey: key) {
-            return fallbackValue
-        }
-
         var lastStatus: OSStatus = errSecItemNotFound
         var sawItemNotFound = false
         var sawMissingEntitlement = false
@@ -152,7 +174,11 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
             var result: AnyObject?
             let status = SecItemCopyMatching(query as CFDictionary, &result)
             if status == errSecSuccess, let data = result as? Data {
-                return String(data: data, encoding: .utf8) ?? ""
+                let value = String(data: data, encoding: .utf8) ?? ""
+                if fallbackPreferences.string(forKey: key) != value {
+                    fallbackPreferences.set(value, forKey: key)
+                }
+                return value
             }
             if status == errSecItemNotFound {
                 sawItemNotFound = true
@@ -161,6 +187,10 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
             } else {
                 lastStatus = status
             }
+        }
+
+        if let fallbackValue = fallbackPreferences.string(forKey: key) {
+            return fallbackValue
         }
 
         if !sawItemNotFound && !sawMissingEntitlement {
@@ -220,7 +250,7 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
     }
 
     func shouldUseGoogleDNSFallback() -> Bool {
-        return true
+        return false
     }
 
     /// Go's (bool, error) return maps to ObjC BOOL output parameter + NSError**.
@@ -408,7 +438,7 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
         }
         
         // Verify we can create Secure Enclave keys
-        let testTag = "com.tailscale.ipn.ios.se-test"
+        let testTag = "top.yesican.tailscale.se-test"
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
@@ -432,7 +462,7 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
     /// Create a new Secure Enclave key for hardware attestation
     func hardwareAttestationKeyCreate(_ error: NSErrorPointer) -> String {
         let keyID = UUID().uuidString
-        let tag = "com.tailscale.ipn.ios.attestation.\(keyID)"
+        let tag = "top.yesican.tailscale.attestation.\(keyID)"
         
         // Create access control for Secure Enclave
         var accessError: Unmanaged<CFError>?
@@ -479,7 +509,7 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
     func hardwareAttestationKeyRelease(_ keyID: String?) throws {
         guard let keyID = keyID else { return }
         
-        let tag = "com.tailscale.ipn.ios.attestation.\(keyID)"
+        let tag = "top.yesican.tailscale.attestation.\(keyID)"
         
         // Remove from memory (thread-safe)
         GoAppContext.removeLoadedKey(keyID)
@@ -590,7 +620,7 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
             return
         }
         
-        let tag = "com.tailscale.ipn.ios.attestation.\(keyID)"
+        let tag = "top.yesican.tailscale.attestation.\(keyID)"
         
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,

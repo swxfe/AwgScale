@@ -181,9 +181,8 @@ func TestTunnelConfigDefaultMTUFallback(t *testing.T) {
 	if tc.MTU != defaultMTU {
 		t.Errorf("MTU = %d, want defaultMTU=%d", tc.MTU, defaultMTU)
 	}
-	// dcfg nil should still trigger the MagicDNS fallback.
-	if len(tc.DNSServers) == 0 || tc.DNSServers[0] != "100.100.100.100" {
-		t.Errorf("DNSServers = %v, want MagicDNS fallback", tc.DNSServers)
+	if len(tc.DNSServers) != 0 {
+		t.Errorf("DNSServers = %v, want no DNS override when Go has no OS DNS config", tc.DNSServers)
 	}
 }
 
@@ -288,7 +287,7 @@ func TestTunnelConfigPreservesCustomHeadscaleRoutes(t *testing.T) {
 	}
 }
 
-func TestTunnelConfigExitNodeUsesPublicDNSForSystemResolver(t *testing.T) {
+func TestTunnelConfigExitNodeUsesPublicDNSForTailscaleServiceDNS(t *testing.T) {
 	mgr := &tunnelConfigManager{}
 	cb := &recordingCallback{}
 	mgr.setCallback(cb)
@@ -317,13 +316,96 @@ func TestTunnelConfigExitNodeUsesPublicDNSForSystemResolver(t *testing.T) {
 	if !containsString(tc.Routes, "0.0.0.0/0") || !containsString(tc.Routes, "::/0") {
 		t.Fatalf("Routes = %v, missing default routes", tc.Routes)
 	}
-	if len(tc.DNSServers) != len(exitNodePublicDNSServers) {
-		t.Fatalf("DNSServers = %v, want %v", tc.DNSServers, exitNodePublicDNSServers)
-	}
-	for i, want := range exitNodePublicDNSServers {
-		if tc.DNSServers[i] != want {
-			t.Fatalf("DNSServers = %v, want %v", tc.DNSServers, exitNodePublicDNSServers)
+	for _, want := range []string{"100.64.0.0/10", "fd7a:115c:a1e0::/48"} {
+		if !containsString(tc.Routes, want) {
+			t.Fatalf("Routes = %v, missing core tunnel route %s", tc.Routes, want)
 		}
+	}
+	wantDNS := []string{"8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844"}
+	if len(tc.DNSServers) != len(wantDNS) {
+		t.Fatalf("DNSServers = %v, want %v", tc.DNSServers, wantDNS)
+	}
+	for i, want := range wantDNS {
+		if tc.DNSServers[i] != want {
+			t.Fatalf("DNSServers = %v, want %v", tc.DNSServers, wantDNS)
+		}
+	}
+}
+
+func TestTunnelConfigExitNodeAddsUnderlayGatewayExclude(t *testing.T) {
+	mgr := &tunnelConfigManager{}
+	mgr.setDefaultRouteExcludeRoutes(func() []netip.Prefix {
+		return []netip.Prefix{
+			netip.MustParsePrefix("192.168.8.1/32"),
+			netip.MustParsePrefix("127.0.0.1/32"),
+		}
+	})
+	cb := &recordingCallback{}
+	mgr.setCallback(cb)
+
+	rc := sampleRouterConfig()
+	rc.Routes = []netip.Prefix{
+		netip.MustParsePrefix("0.0.0.0/0"),
+		netip.MustParsePrefix("::/0"),
+	}
+	rc.LocalRoutes = nil
+
+	if err := mgr.onConfigUpdate(rc, nil); err != nil {
+		t.Fatalf("onConfigUpdate: %v", err)
+	}
+
+	configs := cb.snapshot()
+	var tc TunnelConfig
+	if err := json.Unmarshal(configs[0], &tc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !containsString(tc.ExcludeRoutes, "192.168.8.1/32") {
+		t.Fatalf("ExcludeRoutes = %v, missing underlay gateway", tc.ExcludeRoutes)
+	}
+	if containsString(tc.ExcludeRoutes, "127.0.0.1/32") {
+		t.Fatalf("ExcludeRoutes = %v, must not include loopback underlay route", tc.ExcludeRoutes)
+	}
+}
+
+func TestTunnelConfigDoesNotAddUnderlayExcludeWithoutDefaultRoute(t *testing.T) {
+	mgr := &tunnelConfigManager{}
+	mgr.setDefaultRouteExcludeRoutes(func() []netip.Prefix {
+		return []netip.Prefix{netip.MustParsePrefix("192.168.8.1/32")}
+	})
+	cb := &recordingCallback{}
+	mgr.setCallback(cb)
+
+	rc := sampleRouterConfig()
+	rc.LocalRoutes = nil
+
+	if err := mgr.onConfigUpdate(rc, nil); err != nil {
+		t.Fatalf("onConfigUpdate: %v", err)
+	}
+
+	configs := cb.snapshot()
+	var tc TunnelConfig
+	if err := json.Unmarshal(configs[0], &tc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if containsString(tc.ExcludeRoutes, "192.168.8.1/32") {
+		t.Fatalf("ExcludeRoutes = %v, must not add underlay gateway without default route", tc.ExcludeRoutes)
+	}
+}
+
+func TestTunnelConfigSkipsIdenticalUpdates(t *testing.T) {
+	mgr := &tunnelConfigManager{}
+	cb := &recordingCallback{}
+	mgr.setCallback(cb)
+
+	if err := mgr.onConfigUpdate(sampleRouterConfig(), sampleDNSConfig(t)); err != nil {
+		t.Fatalf("first onConfigUpdate: %v", err)
+	}
+	if err := mgr.onConfigUpdate(sampleRouterConfig(), sampleDNSConfig(t)); err != nil {
+		t.Fatalf("second onConfigUpdate: %v", err)
+	}
+
+	if got := len(cb.snapshot()); got != 1 {
+		t.Fatalf("got %d configs, want one deduplicated update", got)
 	}
 }
 

@@ -2,6 +2,7 @@ package libtailscale
 
 import (
 	_ "golang.org/x/mobile/bind"
+	"tailscale.com/net/netmon"
 )
 
 // Start starts the iOS libtailscale runtime.
@@ -14,6 +15,12 @@ func Start(dataDir, directFileRoot string, hwAttestationPref bool, appCtx AppCon
 // control-plane sockets to a Darwin interface as the extension backend does.
 func StartAppLogin(dataDir, directFileRoot string, appCtx AppContext) Application {
 	return start(dataDir, directFileRoot, false, true, appCtx)
+}
+
+// UpdateLastKnownDefaultRouteInterface tells Darwin netmon which physical
+// interface is currently carrying the system path outside the packet tunnel.
+func UpdateLastKnownDefaultRouteInterface(ifName string) {
+	netmon.UpdateLastKnownDefaultRouteInterface(ifName)
 }
 
 // AppContext provides the platform hooks implemented on the Swift side.
@@ -46,6 +53,7 @@ type Application interface {
 	CallLocalAPIMultipart(timeoutMillis int, method, endpoint string, parts FileParts) (LocalAPIResponse, error)
 	InjectInboundPacket(packet []byte) error
 	NotifyPolicyChanged()
+	RebindUnderlay(why string)
 	SetPacketCallback(cb PacketCallback)
 	Stop()
 	WatchNotifications(mask int, cb NotificationCallback) NotificationManager

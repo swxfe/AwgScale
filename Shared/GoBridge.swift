@@ -101,6 +101,16 @@ enum GoBridge {
         try app.injectInboundPacket(packet)
     }
 
+    /// Tell Darwin netmon which physical interface currently carries underlay traffic.
+    static func updateDefaultRouteInterface(_ ifName: String) {
+        LibtailscaleUpdateLastKnownDefaultRouteInterface(ifName)
+    }
+
+    /// Rebind MagicSock's underlay sockets after detecting one-way packet flow.
+    static func rebindUnderlay(reason: String) {
+        application?.rebindUnderlay(reason)
+    }
+
     /// Stop watching notifications.
     static func stopNotifications(_ handle: NotificationHandle) {
         handle.goManager?.stop()
@@ -169,6 +179,14 @@ enum GoBridge {
     static func injectInboundPacket(_ packet: Data) throws {
         NSLog("[GoBridge] injectInboundPacket(\(packet.count) bytes) — stub")
         throw GoBridgeError.notImplemented
+    }
+
+    static func updateDefaultRouteInterface(_ ifName: String) {
+        NSLog("[GoBridge] updateDefaultRouteInterface(\(ifName)) — stub")
+    }
+
+    static func rebindUnderlay(reason: String) {
+        NSLog("[GoBridge] rebindUnderlay(\(reason)) — stub")
     }
 
     static func stopNotifications(_ handle: NotificationHandle) {

@@ -65,11 +65,11 @@ write_entitlements() {
     <string>${TEAM_ID}</string>
     <key>com.apple.security.application-groups</key>
     <array>
-        <string>group.com.tailscale.ipn.ios</string>
+        <string>group.top.yesican.tailscale</string>
     </array>
     <key>keychain-access-groups</key>
     <array>
-        <string>${TEAM_ID}.com.tailscale.ipn.ios.shared</string>
+        <string>${TEAM_ID}.top.yesican.tailscale.shared</string>
     </array>
     <key>com.apple.developer.networking.networkextension</key>
     <array>

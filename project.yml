@@ -1,6 +1,6 @@
 name: Tailscale
 options:
-  bundleIdPrefix: com.tailscale.ipn
+  bundleIdPrefix: top.yesican
   deploymentTarget:
     iOS: "15.0"
   xcodeVersion: "16.0"
@@ -27,7 +27,7 @@ targets:
         embed: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.tailscale.ipn.ios
+        PRODUCT_BUNDLE_IDENTIFIER: top.yesican.tailscale
         INFOPLIST_FILE: App/Info.plist
         CODE_SIGN_ENTITLEMENTS: App/Tailscale.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -35,9 +35,9 @@ targets:
       path: App/Tailscale.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.tailscale.ipn.ios
+          - group.top.yesican.tailscale
         keychain-access-groups:
-          - $(AppIdentifierPrefix)com.tailscale.ipn.ios.shared
+          - $(AppIdentifierPrefix)top.yesican.tailscale.shared
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
 
@@ -55,16 +55,16 @@ targets:
         embed: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.tailscale.ipn.ios.network-extension
+        PRODUCT_BUNDLE_IDENTIFIER: top.yesican.tailscale.network-extension
         INFOPLIST_FILE: PacketTunnel/Info.plist
         CODE_SIGN_ENTITLEMENTS: PacketTunnel/PacketTunnel.entitlements
     entitlements:
       path: PacketTunnel/PacketTunnel.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.tailscale.ipn.ios
+          - group.top.yesican.tailscale
         keychain-access-groups:
-          - $(AppIdentifierPrefix)com.tailscale.ipn.ios.shared
+          - $(AppIdentifierPrefix)top.yesican.tailscale.shared
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
 
@@ -78,7 +78,7 @@ targets:
       - target: Tailscale
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.tailscale.ipn.ios.tests
+        PRODUCT_BUNDLE_IDENTIFIER: top.yesican.tailscale.tests
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:

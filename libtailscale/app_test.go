@@ -128,6 +128,19 @@ func TestGetDNSBaseConfigGoogleFallback(t *testing.T) {
 	}
 }
 
+func TestGetDNSBaseConfigNoFallbackByDefault(t *testing.T) {
+	ctx := newTestAppContext()
+	b := &backend{appCtx: ctx}
+
+	cfg, err := b.getDNSBaseConfig()
+	if err != nil {
+		t.Fatalf("getDNSBaseConfig: %v", err)
+	}
+	if got := len(cfg.Nameservers); got != 0 {
+		t.Fatalf("len(Nameservers) = %d, want 0", got)
+	}
+}
+
 func TestPendingTUNName(t *testing.T) {
 	tun := newPendingTUN()
 	defer tun.Close()

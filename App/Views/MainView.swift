@@ -7,15 +7,19 @@ struct MainView: View {
 
     /// Currently selected exit node (if any).
     private var currentExitNode: PeerNode? {
-        guard let exitID = appState.prefs?.ExitNodeID, !exitID.isEmpty else { return nil }
+        guard let exitID = appState.effectiveExitNodeID, !exitID.isEmpty else { return nil }
         return appState.peers.first { $0.id == exitID }
     }
 
     private var vpnIsActive: Bool {
-        vpnManager.vpnStatus == .connected || vpnManager.vpnStatus == .connecting || vpnManager.vpnStatus == .reasserting
+        appState.effectiveVPNIsActive(systemActive: vpnManager.isTunnelActive)
     }
 
     private var connectionTitle: String {
+        if let pending = appState.pendingWantRunning {
+            return pending ? "Connecting" : "Disconnecting"
+        }
+
         switch vpnManager.vpnStatus {
         case .connected:
             return "Connected"
@@ -42,6 +46,10 @@ struct MainView: View {
                             }
                         }
                         Spacer()
+                        if appState.pendingWantRunning != nil {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        }
                         Toggle("", isOn: Binding(
                             get: { vpnIsActive },
                             set: { enabled in
@@ -49,6 +57,7 @@ struct MainView: View {
                             }
                         ))
                         .labelsHidden()
+                        .disabled(appState.pendingWantRunning != nil)
                     }
                 }
 
@@ -158,19 +167,6 @@ struct MainView: View {
                     }
                 }
             }
-            .onAppear {
-                appState.loadAwgStatusIfNeeded()
-            }
-            .onChange(of: vpnManager.vpnStatus) { _ in
-                if vpnManager.vpnStatus == .connected {
-                    appState.refreshAwgStatusForTunnelChange()
-                } else {
-                    appState.loadAwgStatusIfNeeded()
-                }
-            }
-            .onChange(of: appState.peers.count) { _ in
-                appState.loadAwgStatusIfNeeded()
-            }
         }
     }
 }
@@ -218,8 +214,7 @@ struct PeerRow: View {
 
             Spacer()
 
-            // AWG sync button (only for remote peers that already expose AWG config)
-            if !peer.isCurrentDevice && hasAwgConfig {
+            if !peer.isCurrentDevice {
                 Button {
                     appState.syncAwgConfigFromPeer(peer)
                 } label: {
@@ -233,7 +228,7 @@ struct PeerRow: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
-                .disabled(isSyncing)
+                .disabled(isSyncing || !peer.online)
             }
 
             if let os = peer.os, !os.isEmpty {

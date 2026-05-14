@@ -70,6 +70,13 @@ final class TunnelConfigBridgeTests: XCTestCase {
         XCTAssertFalse(isIPv6DefaultRoute(address: "fd7a:115c:a1e0::", prefixLen: 48))
     }
 
+    func testTunnelConfigDefaultRouteDetection() {
+        XCTAssertTrue(tunnelConfigHasDefaultRoute(["100.64.0.0/10", "0.0.0.0/0"]))
+        XCTAssertTrue(tunnelConfigHasDefaultRoute(["fd7a:115c:a1e0::/48", "::/0"]))
+        XCTAssertFalse(tunnelConfigHasDefaultRoute(["100.64.0.0/10", "fd7a:115c:a1e0::/48"]))
+        XCTAssertFalse(tunnelConfigHasDefaultRoute(["not-a-route"]))
+    }
+
     // MARK: - TunnelConfigFromGo decoding
 
     /// JSON shape produced by the Go side: must round-trip without loss.
