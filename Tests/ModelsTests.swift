@@ -234,8 +234,8 @@ final class ModelsTests: XCTestCase {
     // MARK: - NotifyWatchOpt
 
     func testDefaultMask() {
-        // Should match: Netmap(8) | Prefs(4) | InitialState(2) | InitialHealthState(128) | RateLimitNetmaps(256)
-        let expected = 8 | 4 | 2 | 128 | 256  // = 398
+        // Should match: Netmap(8) | Prefs(4) | InitialState(2) | InitialOutgoingFiles(64) | InitialHealthState(128) | RateLimitNetmaps(256)
+        let expected = 8 | 4 | 2 | 64 | 128 | 256  // = 462
         XCTAssertEqual(NotifyWatchOpt.defaultMask, expected)
     }
 }

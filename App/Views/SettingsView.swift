@@ -1,22 +1,33 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Minimal settings view for MVP.
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var vpnManager: VPNManager
 
+    private var awgStatusText: String {
+        appState.localAwgStatus ? "Enabled" : "Not configured"
+    }
+
+    private var awgStatusColor: Color {
+        appState.localAwgStatus ? .green : .secondary
+    }
+
     var body: some View {
         List {
             Section("Account") {
                 if let profile = appState.currentProfile {
                     HStack {
-                        Text("User")
+                        SettingsRowLabel(title: "User", systemImage: "person.crop.circle")
                         Spacer()
                         Text(profile.name).foregroundColor(.secondary)
                     }
                     if !profile.controlURL.isEmpty && profile.controlURL != "https://controlplane.tailscale.com" {
                         HStack {
-                            Text("Control Server")
+                            SettingsRowLabel(title: "Control Server", systemImage: "server.rack")
                             Spacer()
                             Text(profile.controlURL).foregroundColor(.secondary)
                         }
@@ -24,113 +35,81 @@ struct SettingsView: View {
                 }
                 
                 NavigationLink(destination: ProfilesView()) {
-                    HStack {
-                        Image(systemName: "person.2")
-                            .foregroundColor(.accentColor)
-                            .frame(width: 24)
-                        Text("Manage Profiles")
-                    }
-                }
-            }
-
-            Section("About") {
-                HStack {
-                    Text("Version")
-                    Spacer()
-                    Text(appState.appVersion).foregroundColor(.secondary)
+                    SettingsRowLabel(title: "Manage Profiles", systemImage: "person.2")
                 }
             }
 
             Section("Network") {
                 NavigationLink(destination: DNSSettingsView()) {
-                    HStack {
-                        Image(systemName: "network")
-                            .foregroundColor(.accentColor)
-                            .frame(width: 24)
-                        Text("DNS Settings")
-                    }
+                    SettingsRowLabel(title: "DNS Settings", systemImage: "network")
                 }
                 
                 NavigationLink(destination: SubnetRoutesView()) {
+                    SettingsRowLabel(title: "Subnet Routes", systemImage: "network")
+                }
+            }
+
+            Section("Files") {
+                NavigationLink(destination: TaildropView()) {
                     HStack {
-                        Image(systemName: "point.3.connected.trianglepath.dotted")
-                            .foregroundColor(.accentColor)
-                            .frame(width: 24)
-                        Text("Subnet Routes")
+                        SettingsRowLabel(title: "Taildrop", systemImage: "arrow.up.arrow.down.circle")
+                        Spacer()
+                        if appState.taildropFilesWaiting {
+                            Text("Files waiting")
+                                .font(.caption)
+                                .foregroundColor(.accentColor)
+                        }
                     }
+                }
+            }
+
+            Section("Amnezia-WG") {
+                HStack {
+                    SettingsRowLabel(title: "Status", systemImage: "shield.fill", color: .orange)
+                    Spacer()
+                    Text(awgStatusText)
+                        .foregroundColor(awgStatusColor)
+                        .font(.caption)
                 }
 
                 NavigationLink(destination: AwgSettingsView()) {
-                    HStack {
-                        Image(systemName: "shield.checkered")
-                            .foregroundColor(.accentColor)
-                            .frame(width: 24)
-                        Text("Amnezia-WG")
-                    }
-                }
-            }
-
-            Section("Security") {
-                NavigationLink(destination: TailnetLockView()) {
-                    HStack {
-                        Image(systemName: "lock.shield")
-                            .foregroundColor(.accentColor)
-                            .frame(width: 24)
-                        Text("Tailnet Lock")
-                    }
-                }
-                
-                NavigationLink(destination: MDMInfoView()) {
-                    HStack {
-                        Image(systemName: "building.2")
-                            .foregroundColor(.accentColor)
-                            .frame(width: 24)
-                        Text("Device Management")
-                    }
-                }
-            }
-
-            Section("Diagnostics") {
-                HStack {
-                    Text("Amnezia-WG")
-                    Spacer()
-                    if appState.localAwgStatus {
-                        HStack(spacing: 4) {
-                            Text("\u{2605}")
-                                .foregroundColor(Color(red: 1.0, green: 0.84, blue: 0.0))
-                            Text("Enabled")
-                                .foregroundColor(.green)
-                        }
-                        .font(.caption)
-                    } else {
-                        Text("Not configured")
-                            .foregroundColor(.secondary)
-                            .font(.caption)
-                    }
+                    SettingsRowLabel(title: "Configuration", systemImage: "slider.horizontal.3", color: .orange)
                 }
 
-                // AWG refresh button
                 Button {
                     appState.refreshAwgStatus()
                 } label: {
                     HStack {
-                        Image(systemName: "arrow.clockwise")
-                        Text("Refresh AWG Status")
+                        if appState.isAwgStatusRefreshing {
+                            ProgressView()
+                                .frame(width: 24)
+                        } else {
+                            SettingsIcon(systemImage: "arrow.clockwise", color: .orange)
+                        }
+                        Text(appState.isAwgStatusRefreshing ? "Refreshing AWG Status" : "Refresh AWG Status")
                     }
                 }
+                .disabled(appState.isAwgStatusRefreshing)
+            }
+
+            Section("Security") {
+                NavigationLink(destination: TailnetLockView()) {
+                    SettingsRowLabel(title: "Tailnet Lock", systemImage: "lock.shield")
+                }
                 
+                NavigationLink(destination: MDMInfoView()) {
+                    SettingsRowLabel(title: "Device Management", systemImage: "building.2")
+                }
+            }
+
+            Section("Diagnostics") {
                 NavigationLink(destination: BugReportView()) {
-                    HStack {
-                        Image(systemName: "ladybug")
-                            .foregroundColor(.accentColor)
-                            .frame(width: 24)
-                        Text("Bug Report")
-                    }
+                    SettingsRowLabel(title: "Bug Report", systemImage: "ladybug")
                 }
 
                 if let lastError = appState.lastError {
                     HStack {
-                        Text("Last Error")
+                        SettingsRowLabel(title: "Last Error", systemImage: "exclamationmark.triangle", color: .red)
                         Spacer()
                         Text(lastError)
                             .foregroundColor(.red)
@@ -141,13 +120,20 @@ struct SettingsView: View {
             }
             
             Section("About") {
+                HStack {
+                    SettingsRowLabel(title: "Version", systemImage: "number.circle")
+                    Spacer()
+                    Text(appState.appVersion).foregroundColor(.secondary)
+                }
+
+                HStack {
+                    SettingsRowLabel(title: "tailscale-awg", systemImage: "shippingbox")
+                    Spacer()
+                    Text(appState.tailscaleAwgVersion).foregroundColor(.secondary)
+                }
+
                 NavigationLink(destination: AboutView()) {
-                    HStack {
-                        Image(systemName: "info.circle")
-                            .foregroundColor(.accentColor)
-                            .frame(width: 24)
-                        Text("About AwgScale")
-                    }
+                    SettingsRowLabel(title: "About AwgScale", systemImage: "info.circle")
                 }
             }
 
@@ -157,13 +143,48 @@ struct SettingsView: View {
                 } label: {
                     HStack {
                         Spacer()
-                        Text("Sign Out")
+                        SettingsRowLabel(title: "Sign Out", systemImage: "rectangle.portrait.and.arrow.right", color: .red)
                         Spacer()
                     }
                 }
             }
         }
         .navigationTitle("Settings")
+        .task {
+            appState.loadAwgStatusIfNeeded()
+        }
+    }
+}
+
+private struct SettingsIcon: View {
+    let systemImage: String
+    var color: Color = .accentColor
+
+    private var resolvedSystemImage: String {
+        #if canImport(UIKit)
+        UIImage(systemName: systemImage) == nil ? "circle" : systemImage
+        #else
+        systemImage
+        #endif
+    }
+
+    var body: some View {
+        Image(systemName: resolvedSystemImage)
+            .foregroundColor(color)
+            .frame(width: 24)
+    }
+}
+
+private struct SettingsRowLabel: View {
+    let title: String
+    let systemImage: String
+    var color: Color = .accentColor
+
+    var body: some View {
+        HStack {
+            SettingsIcon(systemImage: systemImage, color: color)
+            Text(title)
+        }
     }
 }
 
@@ -199,7 +220,7 @@ struct AwgSettingsView: View {
         List {
             Section("Status") {
                 HStack {
-                    Text("Configuration")
+                    SettingsRowLabel(title: "Configuration", systemImage: "shield.fill", color: .orange)
                     Spacer()
                     if appState.localAwgStatus {
                         HStack(spacing: 4) {

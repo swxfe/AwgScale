@@ -51,6 +51,12 @@ class NotificationManager: ObservableObject {
             return false
         }
     }
+
+    func requestAuthorizationIfNeeded() async {
+        await checkAuthorizationStatus()
+        guard authorizationStatus == .notDetermined else { return }
+        _ = await requestAuthorization()
+    }
     
     // MARK: - Categories Setup
     
@@ -194,10 +200,13 @@ class NotificationManager: ObservableObject {
     // MARK: - Taildrop Notifications
     
     func notifyFileReceived(fileName: String, sender: String) async {
-        guard isAuthorized else { return }
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .authorized ||
+              settings.authorizationStatus == .provisional ||
+              settings.authorizationStatus == .ephemeral else { return }
         
         let content = UNMutableNotificationContent()
-        content.title = "File Received"
+        content.title = "Taildrop File Received"
         content.body = "\(sender) sent you \(fileName)"
         content.sound = .default
         content.categoryIdentifier = Self.taildropCategory

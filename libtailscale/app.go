@@ -253,6 +253,12 @@ func (a *App) newBackend(dataDir string, appCtx AppContext, store *stateStore) (
 	sys.Set(ns)
 	ns.ProcessLocalIPs = false // let NetworkExtension packetFlow feed local-IP traffic through WireGuard
 	ns.ProcessSubnets = true
+	// In-process clients (PeerAPI server, PeerAPI outbound dials via UseNetstackForIP)
+	// register gVisor TCP/UDP endpoints on our local Tailnet IPs. Without this flag,
+	// inbound reply packets to those local IPs would be forwarded to NEPacketTunnelFlow
+	// and the iOS kernel (which has no matching socket) and dropped, causing every
+	// Taildrop PUT to time out at the netstack TCP dial. See upstream tailscale#18423.
+	ns.CheckLocalTransportEndpoints = true
 	dialer.UseNetstackForIP = func(ip netip.Addr) bool {
 		_, ok := engine.PeerForIP(ip)
 		return ok
@@ -330,19 +336,34 @@ func (b *backend) defaultRouteExcludeRoutes() []netip.Prefix {
 	}
 	var out []netip.Prefix
 	seen := make(map[netip.Prefix]bool)
-	add := func(p netip.Prefix) {
+	add := func(p netip.Prefix) bool {
 		if !p.IsValid() {
-			return
+			return false
 		}
 		addr := p.Addr()
 		if addr.IsLoopback() || addr.IsUnspecified() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsMulticast() {
-			return
+			return false
 		}
 		if seen[p] {
-			return
+			return false
 		}
 		seen[p] = true
 		out = append(out, p)
+		return true
+	}
+	addAddr := func(addr netip.Addr) bool {
+		addr = addr.Unmap()
+		return add(netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	addAddrString := func(s string) bool {
+		if s == "" || s == "none" {
+			return false
+		}
+		addr, err := netip.ParseAddr(s)
+		if err != nil {
+			return false
+		}
+		return addAddr(addr)
 	}
 	if state := b.netMon.InterfaceState(); state != nil && state.DefaultRouteInterface != "" {
 		for _, pfx := range state.InterfaceIPs[state.DefaultRouteInterface] {
@@ -357,9 +378,43 @@ func (b *backend) defaultRouteExcludeRoutes() []netip.Prefix {
 			for _, peer := range nm.Peers {
 				endpoints := peer.Endpoints()
 				for i := 0; i < endpoints.Len(); i++ {
-					addr := endpoints.At(i).Addr().Unmap()
-					add(netip.PrefixFrom(addr, addr.BitLen()))
+					addAddr(endpoints.At(i).Addr())
 				}
+			}
+			if nm.DERPMap != nil {
+				derpExcludeCountBefore := len(out)
+				resolvedDERPHosts := make(map[string]bool)
+				addDERPHost := func(host string) {
+					if host == "" || host == "none" {
+						return
+					}
+					if _, err := netip.ParseAddr(host); err == nil {
+						addAddrString(host)
+						return
+					}
+					if resolvedDERPHosts[host] {
+						return
+					}
+					resolvedDERPHosts[host] = true
+					ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+					addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+					cancel()
+					if err != nil {
+						return
+					}
+					for _, addr := range addrs {
+						addAddr(addr)
+					}
+				}
+				for _, region := range nm.DERPMap.Regions {
+					for _, node := range region.Nodes {
+						addAddrString(node.IPv4)
+						addAddrString(node.IPv6)
+						addAddrString(node.STUNTestIP)
+						addDERPHost(node.HostName)
+					}
+				}
+				log.Printf("exit node: added %d DERP/STUN underlay route excludes from DERPMap", len(out)-derpExcludeCountBefore)
 			}
 		}
 	}
@@ -419,13 +474,30 @@ func (a *App) RebindUnderlay(why string) {
 	if !ok || magicConn == nil {
 		return
 	}
-	// Avoid magicConn.Rebind() here: recreating the underlay UDP socket
-	// also tears down the DERP connection. On flaky carrier UDP paths this
-	// turns a recoverable peer stall into a full underlay outage. ReSTUN
-	// alone lets magicsock re-discover endpoints and naturally fall back
-	// to DERP without dropping the existing sockets.
-	log.Printf("magicsock: iOS underlay ReSTUN requested: %s", why)
+	// Avoid magicConn.Rebind() here: the public method also probes and may close
+	// DERP. The observed iOS failure is a dead WireGuard ReceiveFunc; do not use
+	// wgdev.BindUpdate here because that closes magicsock's UDP pconn wrappers.
+	// Refresh the sockets, reconnect DERP, then reattach fresh receive routines.
+	log.Printf("magicsock: iOS underlay socket rebind + DERP reconnect + receive restart + endpoint reset + ReSTUN requested: %s", why)
+	const keepCurrentPort = 0
+	if err := rebindMagicsockSockets(magicConn, keepCurrentPort); err != nil {
+		log.Printf("magicsock: iOS underlay socket rebind failed: %v", err)
+	}
+	if err := magicConn.DebugBreakDERPConns(); err != nil {
+		log.Printf("magicsock: iOS DERP reconnect failed: %v", err)
+	}
+	if err := restartWireGuardReceiveFuncs(b.engine, magicConn); err != nil {
+		log.Printf("magicsock: iOS receive restart failed: %v", err)
+	} else {
+		log.Printf("magicsock: iOS receive restart launched")
+	}
+	resetMagicsockEndpointStates(magicConn)
 	magicConn.ReSTUN("ios-underlay-" + why)
+	if n, err := forceWireGuardPeerKeepalive(b.engine); err != nil {
+		log.Printf("magicsock: iOS peer keepalive kick failed: %v", err)
+	} else {
+		log.Printf("magicsock: iOS peer keepalive kick sent to %d peer(s)", n)
+	}
 }
 
 func (a *App) Stop() {

@@ -11,9 +11,21 @@ struct TaildropView: View {
     @State private var selectedFile: TaildropFile?
     @State private var showingShareSheet: Bool = false
     @State private var showingSaveDialog: Bool = false
+
+    private var activeIncomingTransfers: [TaildropIncomingFile] {
+        appState.incomingTaildropFiles.filter { !$0.isDone }
+    }
     
     var body: some View {
         List {
+            if !activeIncomingTransfers.isEmpty {
+                Section("Receiving") {
+                    ForEach(activeIncomingTransfers) { file in
+                        TaildropIncomingProgressRow(file: file)
+                    }
+                }
+            }
+
             if isLoading {
                 Section {
                     HStack {
@@ -53,6 +65,20 @@ struct TaildropView: View {
                         TaildropFileRow(file: file) {
                             selectedFile = file
                             showingShareSheet = true
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                deleteIncomingFile(file)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                deleteIncomingFile(file)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
                         }
                     }
                 } header: {
@@ -100,7 +126,10 @@ struct TaildropView: View {
         .refreshable {
             await loadIncomingFiles()
         }
-        .onAppear {
+        .task {
+            await loadIncomingFiles()
+        }
+        .onChange(of: appState.taildropInboxRevision) { _ in
             Task {
                 await loadIncomingFiles()
             }
@@ -124,31 +153,48 @@ struct TaildropView: View {
         error = nil
         
         do {
-            let endpoint = "/localapi/v0/files"
-            let resp = try await vpn.callLocalAPI(method: "GET", endpoint: endpoint)
-            if resp.statusCode == 404 {
-                incomingFiles = loadLocalIncomingFiles()
-                isLoading = false
-                return
+            let localFiles = loadLocalIncomingFiles()
+            switch try await LocalAPIClient.vpn(vpn).listTaildropFiles() {
+            case .unavailable:
+                incomingFiles = localFiles
+            case .files(let files):
+                incomingFiles = mergedIncomingFiles(localFiles: localFiles, apiFiles: files.map { TaildropFile(from: $0) })
             }
-            if resp.statusCode == 204 || (resp.statusCode == 200 && resp.bodyBase64 == nil) {
-                incomingFiles = []
-                isLoading = false
-                return
-            }
-            
-            let files = try resp.decodedBody([TaildropFileResponse].self, endpoint: endpoint)
-            incomingFiles = files.map { TaildropFile(from: $0) }
+            appState.markTaildropFilesSeen()
             isLoading = false
         } catch {
-            // Empty array is also valid for decoding errors
-            if error is DecodingError {
-                incomingFiles = []
-                isLoading = false
-                return
+            let localFiles = loadLocalIncomingFiles()
+            if localFiles.isEmpty {
+                self.error = "Failed to load files: \(error.localizedDescription)"
+            } else {
+                incomingFiles = localFiles
+                appState.markTaildropFilesSeen()
             }
-            self.error = "Failed to load files: \(error.localizedDescription)"
             isLoading = false
+        }
+    }
+
+    private func mergedIncomingFiles(localFiles: [TaildropFile], apiFiles: [TaildropFile]) -> [TaildropFile] {
+        var filesByName = Dictionary(uniqueKeysWithValues: localFiles.map { ($0.name, $0) })
+        for file in apiFiles {
+            filesByName[file.name] = file.localURL == nil ? filesByName[file.name] ?? file : file
+        }
+        return filesByName.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    private func deleteIncomingFile(_ file: TaildropFile) {
+        Task { @MainActor in
+            do {
+                if let localURL = file.localURL, FileManager.default.fileExists(atPath: localURL.path) {
+                    try FileManager.default.removeItem(at: localURL)
+                } else if let vpn = appState.vpnManager {
+                    try await LocalAPIClient.vpn(vpn).deleteTaildropFile(name: file.name)
+                }
+                incomingFiles.removeAll { $0.id == file.id || $0.name == file.name }
+                appState.markTaildropFilesSeen()
+            } catch {
+                self.error = "Failed to delete \(file.name): \(error.localizedDescription)"
+            }
         }
     }
 
@@ -169,6 +215,48 @@ struct TaildropView: View {
             guard values?.isDirectory != true else { return nil }
             return TaildropFile(localURL: url)
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+}
+
+struct TaildropIncomingProgressRow: View {
+    let file: TaildropIncomingFile
+
+    private var progress: Double? {
+        guard let declaredSize = file.DeclaredSize,
+              declaredSize > 0,
+              let received = file.Received else { return nil }
+        return min(Double(received) / Double(declaredSize), 1)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "arrow.down.doc")
+                    .foregroundColor(.accentColor)
+                Text(file.Name)
+                    .font(.body)
+                    .lineLimit(1)
+                Spacer()
+                Text(progressText)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            if let progress {
+                ProgressView(value: progress)
+            } else {
+                ProgressView()
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var progressText: String {
+        let received = ByteCountFormatter.string(fromByteCount: file.Received ?? 0, countStyle: .file)
+        guard let declaredSize = file.DeclaredSize, declaredSize > 0 else {
+            return received
+        }
+        let total = ByteCountFormatter.string(fromByteCount: declaredSize, countStyle: .file)
+        return "\(received) of \(total)"
     }
 }
 
@@ -243,9 +331,14 @@ struct TaildropSendView: View {
     @State private var isSending: Bool = false
     @State private var sendProgress: Double = 0
     @State private var sendError: String?
+    @State private var sendStatus: String?
+    @State private var sendDetail: String?
+    @State private var targetPeers: [PeerNode] = []
+    @State private var isLoadingTargets: Bool = true
+    @State private var targetError: String?
     
     private var eligiblePeers: [PeerNode] {
-        appState.peers.filter { !$0.isCurrentDevice && $0.online }
+        targetPeers
     }
     
     var body: some View {
@@ -284,8 +377,18 @@ struct TaildropSendView: View {
             
             // Peer selection
             Section {
-                if eligiblePeers.isEmpty {
-                    Text("No online devices available")
+                if isLoadingTargets {
+                    HStack {
+                        ProgressView()
+                            .padding(.trailing, 8)
+                        Text("Checking available devices...")
+                            .foregroundColor(.secondary)
+                    }
+                } else if let targetError {
+                    Label(targetError, systemImage: "exclamationmark.triangle")
+                        .foregroundColor(.red)
+                } else if eligiblePeers.isEmpty {
+                    Text("No Taildrop-capable devices available")
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(eligiblePeers) { peer in
@@ -340,7 +443,16 @@ struct TaildropSendView: View {
                 
                 if isSending {
                     Section {
-                        ProgressView(value: sendProgress)
+                        if sendProgress > 0 {
+                            ProgressView(value: sendProgress)
+                        } else {
+                            ProgressView()
+                        }
+                        if let sendDetail {
+                            Text(sendDetail)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
             }
@@ -351,48 +463,78 @@ struct TaildropSendView: View {
                         .foregroundColor(.red)
                 }
             }
+
+            if let status = sendStatus {
+                Section {
+                    Label(status, systemImage: "checkmark.circle")
+                        .foregroundColor(.green)
+                }
+            }
         }
         .navigationTitle("Send Files")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingFilePicker) {
             DocumentPicker(selectedURLs: $selectedFileURLs)
         }
+        .task {
+            await loadTargets()
+        }
+    }
+
+    @MainActor
+    private func loadTargets() async {
+        guard let vpn = appState.vpnManager else {
+            targetError = "VPN manager not available"
+            isLoadingTargets = false
+            return
+        }
+
+        isLoadingTargets = true
+        targetError = nil
+
+        do {
+            let targets = try await LocalAPIClient.vpn(vpn).taildropTargets()
+            targetPeers = targets.map(\.peer)
+            if let selectedPeer, !targetPeers.contains(where: { $0.id == selectedPeer.id }) {
+                self.selectedPeer = nil
+            }
+        } catch {
+            targetPeers = []
+            selectedPeer = nil
+            targetError = error.localizedDescription
+        }
+
+        isLoadingTargets = false
     }
     
+    @MainActor
     private func sendFiles() {
         guard let peer = selectedPeer,
               let vpn = appState.vpnManager,
               !selectedFileURLs.isEmpty else { return }
+        let filesToSend = selectedFileURLs
         
         isSending = true
         sendError = nil
+        sendStatus = nil
+        sendDetail = nil
         sendProgress = 0
         
         Task {
             do {
-                let totalFiles = selectedFileURLs.count
-                for (index, url) in selectedFileURLs.enumerated() {
-                    // Read file data
-                    guard url.startAccessingSecurityScopedResource() else {
-                        throw TaildropError.accessDenied
-                    }
-                    defer { url.stopAccessingSecurityScopedResource() }
-                    
-                    let data = try Data(contentsOf: url)
-                    let fileName = url.lastPathComponent
-                    
-                    // PUT to /localapi/v0/file-put/{peerID}/{filename}
-                    let endpoint = "/localapi/v0/file-put/\(peer.id)/\(fileName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fileName)"
-                    let resp = try await vpn.callLocalAPI(method: "PUT", endpoint: endpoint, body: data)
-                    try resp.requireSuccess(endpoint: endpoint)
-                    
-                    await MainActor.run {
-                        sendProgress = Double(index + 1) / Double(totalFiles)
-                    }
+                guard eligiblePeers.contains(where: { $0.id == peer.id }) else {
+                    throw TaildropError.noAvailableTarget
+                }
+                let totalFiles = filesToSend.count
+                try await TaildropSendService.send(files: filesToSend, to: peer, vpn: vpn) { update in
+                    sendProgress = max(sendProgress, update.progress)
+                    sendDetail = update.detail
                 }
                 
                 await MainActor.run {
                     isSending = false
+                    sendDetail = nil
+                    sendStatus = totalFiles == 1 ? "Sent \(filesToSend[0].lastPathComponent)" : "Sent \(totalFiles) files"
                     selectedFileURLs = []
                     selectedPeer = nil
                 }
@@ -400,15 +542,11 @@ struct TaildropSendView: View {
                 await MainActor.run {
                     sendError = "Failed to send: \(error.localizedDescription)"
                     isSending = false
+                    sendDetail = nil
                 }
             }
         }
     }
-}
-
-enum TaildropError: Error {
-    case accessDenied
-    case sendFailed
 }
 
 /// Document picker for selecting files.
@@ -453,14 +591,6 @@ struct ShareSheet: UIViewControllerRepresentable {
 }
 
 // MARK: - Models
-
-/// Response from /localapi/v0/files
-struct TaildropFileResponse: Codable {
-    let Name: String
-    let Size: Int64
-    let Sender: String?
-    let Started: String?
-}
 
 /// Parsed Taildrop file for display.
 struct TaildropFile: Identifiable {

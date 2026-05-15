@@ -189,11 +189,9 @@ struct BugReportView: View {
                 
                 // Fetch logs from LocalAPI
                 do {
-                    let endpoint = "/localapi/v0/bugreport"
-                    let logsResp = try await vpn.callLocalAPI(method: "GET", endpoint: endpoint)
-                    let bodyData = try logsResp.bodyData(endpoint: endpoint)
-                    if let logsStr = String(data: bodyData, encoding: .utf8) {
-                        diagnostics["bugreport_logs"] = logsStr
+                    let logs = try await LocalAPIClient.vpn(vpn).bugReportLogs()
+                    if !logs.isEmpty {
+                        diagnostics["bugreport_logs"] = logs
                     }
                 } catch {
                     diagnostics["bugreport_error"] = error.localizedDescription

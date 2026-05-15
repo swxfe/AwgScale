@@ -215,17 +215,12 @@ struct TailnetLockView: View {
         error = nil
         
         do {
-            let endpoint = "/localapi/v0/tka/status"
-            let resp = try await vpn.callLocalAPI(method: "GET", endpoint: endpoint)
-            if resp.statusCode == 404 {
-                // 404 or other means TKA not available
+            switch try await LocalAPIClient.vpn(vpn).tkaStatus() {
+            case .unavailable:
                 lockStatus = nil
-                isLoading = false
-                return
+            case .status(let status):
+                lockStatus = TailnetLockStatus(from: status)
             }
-            
-            let status = try resp.decodedBody(TKAStatusResponse.self, endpoint: endpoint)
-            lockStatus = TailnetLockStatus(from: status)
             isLoading = false
         } catch {
             self.error = "Failed to load status: \(error.localizedDescription)"
@@ -240,10 +235,7 @@ struct TailnetLockView: View {
         
         Task {
             do {
-                let endpoint = "/localapi/v0/tka/sign"
-                let body = try JSONEncoder().encode(["url": url])
-                let resp = try await vpn.callLocalAPI(method: "POST", endpoint: endpoint, body: body)
-                try resp.requireSuccess(endpoint: endpoint)
+                try await LocalAPIClient.vpn(vpn).tkaSign(url: url)
                 
                 await MainActor.run {
                     isSigning = false
@@ -345,17 +337,6 @@ struct SignURLView: View {
 }
 
 // MARK: - Models
-
-/// Response from /localapi/v0/tka/status
-struct TKAStatusResponse: Codable {
-    let Enabled: Bool?
-    let Head: String?
-    let PublicKey: String?
-    let NodeKey: String?
-    let NodeKeySigned: Bool?
-    let IsSigningKey: Bool?
-    let TrustedKeys: [String]?
-}
 
 /// Parsed Tailnet Lock status.
 struct TailnetLockStatus {

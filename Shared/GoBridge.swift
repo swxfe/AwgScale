@@ -81,6 +81,90 @@ enum GoBridge {
         return LocalAPIResponse(statusCode: statusCode, body: bodyData)
     }
 
+    static func callLocalAPI(
+        timeoutMillis: Int,
+        method: String,
+        endpoint: String,
+        bodyFileURL: URL,
+        readBody: Bool = true
+    ) async throws -> LocalAPIResponse {
+        guard let app = application else { throw GoBridgeError.startFailed }
+
+        let inputStream = try FileInputStream(bodyFileURL)
+        defer { try? inputStream.close() }
+
+        let goResp = try app.callLocalAPI(timeoutMillis, method: method, endpoint: endpoint, body: inputStream)
+
+        let statusCode = goResp.statusCode()
+        let bodyData = readBody ? try goResp.bodyBytes() : Data()
+
+        return LocalAPIResponse(statusCode: statusCode, body: bodyData)
+    }
+
+    static func callTaildropFilePut(
+        timeoutMillis: Int,
+        peerID: String,
+        fileURL: URL,
+        transferID: String,
+        readBody: Bool = true
+    ) async throws -> LocalAPIResponse {
+        guard let app = application else { throw GoBridgeError.startFailed }
+
+        let fileName = fileURL.lastPathComponent.isEmpty ? "file" : fileURL.lastPathComponent
+        let fileSize = try taildropFileSize(fileURL)
+        let transfer = TaildropUploadManifestEntry(
+            ID: transferID,
+            Name: fileName,
+            PeerID: peerID,
+            DeclaredSize: fileSize
+        )
+        let manifestData = try JSONEncoder().encode([transfer])
+
+        let manifestPart = LibtailscaleFilePart()
+        manifestPart.filename = "manifest.json"
+        manifestPart.contentType = "application/json"
+        manifestPart.contentLength = Int64(manifestData.count)
+        manifestPart.body = DataInputStream(manifestData)
+
+        let fileStream = try FileInputStream(fileURL)
+        defer { try? fileStream.close() }
+
+        let filePart = LibtailscaleFilePart()
+        filePart.filename = fileName
+        filePart.contentType = "application/octet-stream"
+        filePart.contentLength = fileSize
+        filePart.body = fileStream
+
+        let parts = MultipartFileParts([manifestPart, filePart])
+        let goResp = try app.callLocalAPIMultipart(
+            timeoutMillis,
+            method: "POST",
+            endpoint: "/localapi/v0/file-put/\(peerID)",
+            parts: parts
+        )
+
+        let statusCode = goResp.statusCode()
+        let bodyData = readBody ? try goResp.bodyBytes() : Data()
+
+        return LocalAPIResponse(statusCode: statusCode, body: bodyData)
+    }
+
+    private struct TaildropUploadManifestEntry: Encodable {
+        let ID: String
+        let Name: String
+        let PeerID: String
+        let DeclaredSize: Int64
+    }
+
+    private static func taildropFileSize(_ url: URL) throws -> Int64 {
+        let values = try url.resourceValues(forKeys: [.fileSizeKey])
+        if let size = values.fileSize {
+            return Int64(size)
+        }
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes[.size] as? NSNumber)?.int64Value ?? -1
+    }
+
     /// Register a packet callback for packets emitted by the Go TUN device.
     static func setPacketCallback(_ callback: @escaping (Data) -> Void) {
         guard let app = application else { return }
@@ -168,6 +252,28 @@ enum GoBridge {
         throw GoBridgeError.notImplemented
     }
 
+    static func callLocalAPI(
+        timeoutMillis: Int,
+        method: String,
+        endpoint: String,
+        bodyFileURL: URL,
+        readBody: Bool = true
+    ) async throws -> LocalAPIResponse {
+        NSLog("[GoBridge] callLocalAPI(\(method) \(endpoint), file=\(bodyFileURL.lastPathComponent)) — stub")
+        throw GoBridgeError.notImplemented
+    }
+
+    static func callTaildropFilePut(
+        timeoutMillis: Int,
+        peerID: String,
+        fileURL: URL,
+        transferID: String,
+        readBody: Bool = true
+    ) async throws -> LocalAPIResponse {
+        NSLog("[GoBridge] callTaildropFilePut(peerID=\(peerID), transferID=\(transferID), file=\(fileURL.lastPathComponent)) — stub")
+        throw GoBridgeError.notImplemented
+    }
+
     static func setPacketCallback(_ callback: @escaping (Data) -> Void) {
         NSLog("[GoBridge] setPacketCallback — stub")
     }
@@ -245,5 +351,5 @@ struct NotifyWatchOpt {
 
     /// Default mask for the iOS notification subscription.
     static let defaultMask =
-        netmap | prefs | initialState | initialHealthState | rateLimitNetmaps
+        netmap | prefs | initialState | initialHealthState | initialOutgoingFiles | rateLimitNetmaps
 }

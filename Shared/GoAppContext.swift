@@ -699,6 +699,47 @@ class DataInputStream: NSObject, LibtailscaleInputStreamProtocol {
     }
 }
 
+/// Streams a file into Go's LocalAPI request body without loading it all into IPC memory.
+class FileInputStream: NSObject, LibtailscaleInputStreamProtocol {
+    private var handle: FileHandle?
+    private let chunkSize = 256 * 1024
+
+    init(_ url: URL) throws {
+        self.handle = try FileHandle(forReadingFrom: url)
+    }
+
+    func read() throws -> Data {
+        guard let handle else { return Data() }
+        let data = try handle.read(upToCount: chunkSize) ?? Data()
+        if data.isEmpty {
+            try close()
+        }
+        return data
+    }
+
+    func close() throws {
+        try handle?.close()
+        handle = nil
+    }
+}
+
+class MultipartFileParts: NSObject, LibtailscaleFilePartsProtocol {
+    private let parts: [LibtailscaleFilePart]
+
+    init(_ parts: [LibtailscaleFilePart]) {
+        self.parts = parts
+    }
+
+    func len() -> Int32 {
+        Int32(parts.count)
+    }
+
+    func get(_ index: Int32) -> LibtailscaleFilePart? {
+        guard index >= 0, Int(index) < parts.count else { return nil }
+        return parts[Int(index)]
+    }
+}
+
 #endif // canImport(Libtailscale)
 
 func clearPersistedGoState() {

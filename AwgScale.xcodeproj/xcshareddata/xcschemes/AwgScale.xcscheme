@@ -35,6 +35,20 @@
                ReferencedContainer = "container:AwgScale.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "70071032983C240C4E880366"
+               BuildableName = "TaildropShare.appex"
+               BlueprintName = "TaildropShare"
+               ReferencedContainer = "container:AwgScale.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction

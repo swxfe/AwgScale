@@ -164,9 +164,7 @@ struct ProfilesView: View {
         error = nil
         
         do {
-            let endpoint = "/localapi/v0/profiles/"
-            let resp = try await vpn.callLocalAPI(method: "GET", endpoint: endpoint)
-            profiles = try resp.decodedBody([LoginProfile].self, endpoint: endpoint)
+            profiles = try await LocalAPIClient.vpn(vpn).listProfiles()
             isLoading = false
         } catch {
             self.error = "Failed to load profiles: \(error.localizedDescription)"
@@ -187,9 +185,7 @@ struct ProfilesView: View {
                 try await Task.sleep(nanoseconds: 500_000_000)
                 
                 // Switch profile
-                let endpoint = "/localapi/v0/profiles/\(profile.ID)"
-                let resp = try await vpn.callLocalAPI(method: "POST", endpoint: endpoint)
-                try resp.requireSuccess(endpoint: endpoint)
+                try await LocalAPIClient.vpn(vpn).switchProfile(id: profile.ID)
                 
                 // Wait and reconnect
                 try await Task.sleep(nanoseconds: 1_000_000_000)
@@ -213,9 +209,7 @@ struct ProfilesView: View {
         
         Task {
             do {
-                let endpoint = "/localapi/v0/profiles/\(profile.ID)"
-                let resp = try await vpn.callLocalAPI(method: "DELETE", endpoint: endpoint)
-                try resp.requireSuccess(endpoint: endpoint)
+                try await LocalAPIClient.vpn(vpn).deleteProfile(id: profile.ID)
                 await loadProfiles()
             } catch {
                 await MainActor.run {
@@ -367,25 +361,17 @@ struct AddProfileView: View {
         
         Task {
             do {
+                let api = LocalAPIClient.vpn(vpn)
                 // Create new profile
-                let newProfileEndpoint = "/localapi/v0/profiles/new"
-                let newProfileResp = try await vpn.callLocalAPI(method: "POST", endpoint: newProfileEndpoint)
-                try newProfileResp.requireSuccess(endpoint: newProfileEndpoint)
-                
+                try await api.newProfile()
+
                 // Set control URL if custom
                 if useCustomServer && !controlURL.isEmpty {
-                    let prefsEndpoint = "/localapi/v0/prefs"
-                    let prefs = MaskedPrefs.setControlURL(controlURL)
-                    let body = try JSONEncoder().encode(prefs)
-                    let prefsResp = try await vpn.callLocalAPI(method: "PATCH", endpoint: prefsEndpoint, body: body)
-                    try prefsResp.requireSuccess(endpoint: prefsEndpoint)
+                    try await api.patchPrefs(.setControlURL(controlURL))
                 }
-                
+
                 // Login with auth key
-                let loginEndpoint = "/localapi/v0/login"
-                let loginBody = try JSONEncoder().encode(["authKey": authKey])
-                let loginResp = try await vpn.callLocalAPI(method: "POST", endpoint: loginEndpoint, body: loginBody)
-                try loginResp.requireSuccess(endpoint: loginEndpoint)
+                try await api.login(authKey: authKey)
                 
                 await MainActor.run {
                     isAdding = false

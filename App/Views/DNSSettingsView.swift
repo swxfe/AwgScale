@@ -5,7 +5,9 @@ import SwiftUI
 struct DNSSettingsView: View {
     @EnvironmentObject var appState: AppState
     @State private var dnsConfig: DNSConfig?
+    @State private var useTailscaleDNS: Bool = true
     @State private var isLoading: Bool = true
+    @State private var isSavingDNSPreference: Bool = false
     @State private var error: String?
     
     var body: some View {
@@ -25,6 +27,23 @@ struct DNSSettingsView: View {
                         .foregroundColor(.red)
                 }
             } else if let config = dnsConfig {
+                Section {
+                    Toggle(isOn: Binding(
+                        get: { useTailscaleDNS },
+                        set: { setUseTailscaleDNS($0) }
+                    )) {
+                        HStack {
+                            Image(systemName: "network")
+                                .foregroundColor(.accentColor)
+                                .frame(width: 24)
+                            Text("Use Tailscale DNS")
+                        }
+                    }
+                    .disabled(isSavingDNSPreference)
+                } footer: {
+                    Text("Use DNS settings from your tailnet, including MagicDNS and split DNS routes.")
+                }
+
                 // MagicDNS status
                 Section {
                     HStack {
@@ -119,9 +138,9 @@ struct DNSSettingsView: View {
                 // Managed DNS toggle info
                 Section {
                     HStack {
-                        Text("Use Managed DNS")
+                        Text("Tailnet DNS Active")
                         Spacer()
-                        Text(config.useTailscaleDNS ? "Yes" : "No")
+                        Text(useTailscaleDNS && config.hasManagedDNS ? "Yes" : "No")
                             .foregroundColor(.secondary)
                     }
                 } footer: {
@@ -139,10 +158,8 @@ struct DNSSettingsView: View {
         .refreshable {
             await loadDNSConfig()
         }
-        .onAppear {
-            Task {
-                await loadDNSConfig()
-            }
+        .task {
+            await loadDNSConfig()
         }
     }
     
@@ -158,14 +175,42 @@ struct DNSSettingsView: View {
         error = nil
         
         do {
-            let endpoint = "/localapi/v0/dns/config"
-            let resp = try await vpn.callLocalAPI(method: "GET", endpoint: endpoint)
-            let config = try resp.decodedBody(DNSConfigResponse.self, endpoint: endpoint)
+            let client = LocalAPIClient.vpn(vpn)
+            let config = try await client.dnsConfig()
+            let prefs = try? await client.ipnPrefs()
+
+            useTailscaleDNS = prefs?.CorpDNS ?? true
             dnsConfig = DNSConfig(from: config)
             isLoading = false
         } catch {
             self.error = "Failed to load DNS config: \(error.localizedDescription)"
             isLoading = false
+        }
+    }
+
+    private func setUseTailscaleDNS(_ enabled: Bool) {
+        guard !isSavingDNSPreference, let vpn = appState.vpnManager else { return }
+        let previous = useTailscaleDNS
+        useTailscaleDNS = enabled
+        isSavingDNSPreference = true
+
+        Task {
+            do {
+                let client = LocalAPIClient.vpn(vpn)
+                try await client.setUseTailscaleDNS(enabled)
+                let config = try await client.dnsConfig()
+                await MainActor.run {
+                    dnsConfig = DNSConfig(from: config)
+                    isSavingDNSPreference = false
+                    error = nil
+                }
+            } catch {
+                await MainActor.run {
+                    useTailscaleDNS = previous
+                    self.error = "Failed to update DNS preference: \(error.localizedDescription)"
+                    isSavingDNSPreference = false
+                }
+            }
         }
     }
 }
@@ -209,18 +254,6 @@ struct DNSInfoRow: View {
 
 // MARK: - DNS Config Models
 
-/// Response from /localapi/v0/dns/config
-struct DNSConfigResponse: Codable {
-    let Resolvers: [ResolverEntry]?
-    let FallbackResolvers: [ResolverEntry]?
-    let Routes: [String: [ResolverEntry]?]?
-    let Domains: [String]?
-    
-    struct ResolverEntry: Codable {
-        let Addr: String?
-    }
-}
-
 /// Parsed DNS configuration for display.
 struct DNSConfig {
     let resolvers: [String]
@@ -229,10 +262,12 @@ struct DNSConfig {
     let searchDomains: [String]
     let magicDNSEnabled: Bool
     let magicDNSSuffix: String?
-    let useTailscaleDNS: Bool
+    let hasManagedDNS: Bool
     
     init(from response: DNSConfigResponse) {
-        self.resolvers = response.Resolvers?.compactMap { $0.Addr } ?? []
+        let resolvers = response.Resolvers?.compactMap { $0.Addr } ?? []
+        let nameservers = response.Nameservers ?? []
+        self.resolvers = resolvers.isEmpty ? nameservers : resolvers
         self.fallbackResolvers = response.FallbackResolvers?.compactMap { $0.Addr } ?? []
         
         var routesMap: [String: [String]] = [:]
@@ -247,9 +282,9 @@ struct DNSConfig {
         self.routes = routesMap
         
         self.searchDomains = response.Domains ?? []
-        self.magicDNSEnabled = !self.resolvers.isEmpty || !routesMap.isEmpty
+        self.magicDNSEnabled = response.Proxied ?? false
         self.magicDNSSuffix = response.Domains?.first
-        self.useTailscaleDNS = true
+        self.hasManagedDNS = magicDNSEnabled || !self.resolvers.isEmpty || !routesMap.isEmpty || !fallbackResolvers.isEmpty || !searchDomains.isEmpty
     }
 }
 

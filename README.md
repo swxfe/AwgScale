@@ -32,13 +32,17 @@ Implemented today:
 Not implemented or still rough:
 
 - App Store distribution and production provisioning profiles.
-- iOS device advertisement as an exit node or subnet router. The current iOS target consumes routes; advertising is platform-limited and still needs design work.
-- A stable public API surface for Swift LocalAPI calls. Several screens still call LocalAPI endpoints directly.
+- Route-advertising/provider mode. The current iOS target consumes exit-node and subnet routes; it does not advertise this device as an exit node or subnet router. The concrete provider target is Apple TV/tvOS exit-node support, matching the upstream shape of a tvOS Network Extension plus the standard exit-node route-advertising prefs path; it still needs a tvOS target, entitlements, UI, and device validation.
+- Keychain-backed state-store hardening. The Go state store already routes through `GoAppContext` Keychain helpers with a preferences fallback, but migration, access-group fallback behavior, and stale App Group repair need more focused tests before treating it as production-grade credential storage.
+- Apple TV/tvOS packaging. There is no macOS UI target planned. A tvOS build should share as much SwiftUI and Packet Tunnel code as possible, but the install/signing/provisioning path and tvOS-specific Network Extension behavior still need design work.
+- Tighter NetworkExtension workarounds. Several Apple VPN-framework quirks (e.g. settings-churn near manual disconnect, DNS scoping during exit-node DNS fallback, IPv6 route handling) are handled ad hoc and would benefit from a single documented compatibility layer.
+- MDM policy coverage. We display the policy keys we currently consume, but the upstream managed-configuration surface is larger; we should enumerate and gate-test every key we honor, and explicitly reject ones we do not.
+- Diagnostics and reproducibility. There is no CI yet, no signed-IPA reproducibility check, and no automated cross-check that the embedded `Libtailscale.xcframework` matches the patched backend revision committed under `build/tailscale-patched/`.
 
 ## Roadmap
 
 - Better route-advertising support on platforms that can safely expose it.
-- A typed Swift LocalAPI client to replace scattered endpoint calls.
+- Continue hardening the typed Swift LocalAPI client with tests, naming cleanup, and coverage for new endpoints before views or state logic call the raw bridge directly.
 - CI builds for Go tests, Swift tests, and device-target validation builds.
 - More focused tests around profile switching, Taildrop, AWG sync, MDM policy locks, and tunnel shutdown races.
 

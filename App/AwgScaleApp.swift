@@ -13,6 +13,7 @@ struct AwgScaleApp: App {
             _ = await vpnManager.refreshStatus()
             appState.loadSharedState()
             appState.foregroundResume(vpnActive: vpnManager.isTunnelActive)
+            await NotificationManager.shared.requestAuthorizationIfNeeded()
         }
     }
 

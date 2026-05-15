@@ -19,6 +19,9 @@ targets:
       - path: App
       - path: Shared
     dependencies:
+      - target: TaildropShare
+        embed: true
+        codeSign: true
       - target: PacketTunnel
         embed: true
         codeSign: true
@@ -40,6 +43,31 @@ targets:
           - $(AppIdentifierPrefix)top.yesican.awgscale.shared
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
+
+  TaildropShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+      - path: Shared/IPCConstants.swift
+      - path: Shared/LocalAPI.swift
+      - path: Shared/Models.swift
+      - path: Shared/LocalAPIClient.swift
+      - path: Shared/TaildropSendService.swift
+      - path: Shared/VPNManager.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: top.yesican.awgscale.share-extension
+        INFOPLIST_FILE: ShareExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: SHARE_EXTENSION
+    entitlements:
+      path: ShareExtension/ShareExtension.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.top.yesican.awgscale
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)top.yesican.awgscale.shared
 
   PacketTunnel:
     type: app-extension
@@ -86,6 +114,7 @@ schemes:
     build:
       targets:
         AwgScale: all
+        TaildropShare: all
         PacketTunnel: all
     run:
       config: Debug

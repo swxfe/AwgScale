@@ -75,11 +75,21 @@ class VPNManager: ObservableObject {
                 }
             } catch {
                 NSLog("Failed to refresh VPN manager: \(error)")
+                self.manager = nil
+                needsConfigurationInstall = true
+                await loadManager()
             }
         }
 
         vpnStatus = manager?.connection.status ?? .invalid
         return vpnStatus
+    }
+
+    func requiresConfigurationInstall() async -> Bool {
+        if manager == nil {
+            await loadManager()
+        }
+        return needsConfigurationInstall || manager?.isEnabled != true
     }
 
     @discardableResult
@@ -208,9 +218,7 @@ class VPNManager: ObservableObject {
     func connectTunnel() async throws {
         lastError = nil
 
-        if manager == nil || vpnStatus == .invalid {
-            await loadManager()
-        }
+        await loadManager()
 
         let shouldInstallConfiguration = needsConfigurationInstall || manager?.isEnabled != true
         let shouldRestartAfterConfigurationInstall = shouldInstallConfiguration && isTunnelActive
@@ -231,7 +239,7 @@ class VPNManager: ObservableObject {
         default:
             break
         }
-        try await startVPNTunnelWithRetryIfNeeded()
+        try await startVPNTunnelAndWaitForProgress()
     }
 
     func disconnect() {
@@ -242,17 +250,39 @@ class VPNManager: ObservableObject {
     // MARK: - IPC: App → Extension
 
     /// Send a raw message to the Packet Tunnel Extension and receive a response.
-    func sendMessage(_ data: Data) async throws -> Data? {
+    func sendMessage(_ data: Data, timeoutSeconds: TimeInterval = 15) async throws -> Data? {
         guard let session = manager?.connection as? NETunnelProviderSession else {
             throw VPNError.noSession
         }
         return try await withCheckedThrowingContinuation { continuation in
+            let lock = NSLock()
+            var didResume = false
+
+            func resume(_ result: Result<Data?, Error>) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !didResume else { return }
+                didResume = true
+                switch result {
+                case .success(let response):
+                    continuation.resume(returning: response)
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+
             do {
                 try session.sendProviderMessage(data) { response in
-                    continuation.resume(returning: response)
+                    resume(.success(response))
                 }
             } catch {
-                continuation.resume(throwing: error)
+                resume(.failure(error))
+                return
+            }
+
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+                resume(.failure(VPNError.ipcTimeout))
             }
         }
     }
@@ -260,22 +290,60 @@ class VPNManager: ObservableObject {
     /// Send an IPC request to the Extension and decode the response.
     func sendIPCRequest(_ request: IPCRequest) async throws -> IPCResponse {
         let requestData = try JSONEncoder().encode(request)
-        guard let responseData = try await sendMessage(requestData) else {
+        let requestTimeout = TimeInterval(request.timeoutMillis ?? 30000) / 1000.0
+        let maxTransportTimeout: TimeInterval = request.command == .callLocalAPIWithSharedFile ? 900 : 65
+        let transportTimeout = min(max(requestTimeout + 2, 3), maxTransportTimeout)
+        guard let responseData = try await sendMessage(requestData, timeoutSeconds: transportTimeout) else {
             return IPCResponse.failure("No response from Extension")
         }
         return try JSONDecoder().decode(IPCResponse.self, from: responseData)
     }
 
     /// Call a LocalAPI endpoint through the Extension.
-    func callLocalAPI(method: String, endpoint: String, body: Data? = nil, timeout: Int = 30000) async throws -> IPCResponse {
+    func callLocalAPI(method: String, endpoint: String, body: Data? = nil, timeout: Int = 30000, readBody: Bool = true) async throws -> IPCResponse {
         let request = IPCRequest(
             command: .callLocalAPI,
             method: method,
             endpoint: endpoint,
             bodyBase64: body?.base64EncodedString(),
-            timeoutMillis: timeout
+            timeoutMillis: timeout,
+            readBody: readBody
         )
         return try await sendIPCRequest(request)
+    }
+
+    func callLocalAPIWithFileBody(method: String, endpoint: String, fileURL: URL, transferID: String? = nil, timeout: Int = 600000, readBody: Bool = false) async throws -> IPCResponse {
+        let (relativePath, cleanupURL) = try prepareSharedUploadFile(fileURL)
+        defer { try? FileManager.default.removeItem(at: cleanupURL) }
+
+        let request = IPCRequest(
+            command: .callLocalAPIWithSharedFile,
+            method: method,
+            endpoint: endpoint,
+            bodyFileRelativePath: relativePath,
+            bodyFileTransferID: transferID,
+            timeoutMillis: timeout,
+            readBody: readBody
+        )
+        return try await sendIPCRequest(request)
+    }
+
+    private func prepareSharedUploadFile(_ sourceURL: URL) throws -> (relativePath: String, cleanupURL: URL) {
+        guard let containerURL = sharedContainerURL else {
+            throw VPNError.sharedContainerUnavailable
+        }
+
+        let uploadRootName = "taildrop-uploads"
+        let uploadID = UUID().uuidString
+        let fileName = sourceURL.lastPathComponent.isEmpty ? "file" : sourceURL.lastPathComponent
+        let uploadDirectory = containerURL
+            .appendingPathComponent(uploadRootName, isDirectory: true)
+            .appendingPathComponent(uploadID, isDirectory: true)
+        let destinationURL = uploadDirectory.appendingPathComponent(fileName, isDirectory: false)
+
+        try FileManager.default.createDirectory(at: uploadDirectory, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+        return ("\(uploadRootName)/\(uploadID)/\(fileName)", uploadDirectory)
     }
 
     /// Trigger interactive login via the Extension.
@@ -312,7 +380,7 @@ class VPNManager: ObservableObject {
         }
     }
 
-    private func startVPNTunnelWithRetryIfNeeded() async throws {
+    private func startVPNTunnelAndWaitForProgress() async throws {
         guard let manager = manager else {
             throw VPNError.noManager
         }
@@ -322,8 +390,7 @@ class VPNManager: ObservableObject {
         } catch {
             let status = updateStatusFromConnection()
             if status == .connecting || status == .reasserting {
-                NSLog("VPN start requested while status is \(status.rawValue); retrying after stop: \(error)")
-                try await retryTunnelStart(manager)
+                NSLog("VPN start requested while status is \(status.rawValue); continuing without retry: \(error)")
                 return
             }
             throw error
@@ -332,21 +399,8 @@ class VPNManager: ObservableObject {
         updateStatusFromConnection()
         let status = await waitForTunnelStartProgress(timeoutSeconds: 10)
         if status == .connecting || status == .reasserting {
-            NSLog("VPN start remained in status \(status.rawValue); retrying tunnel start")
-            try await retryTunnelStart(manager)
+            NSLog("VPN start remained in status \(status.rawValue); continuing to backend readiness check")
         }
-    }
-
-    private func retryTunnelStart(_ manager: NETunnelProviderManager) async throws {
-        manager.connection.stopVPNTunnel()
-        await waitForTunnelStopped()
-        try await manager.loadFromPreferences()
-        needsConfigurationInstall = !manager.isEnabled
-        observeStatus()
-        vpnStatus = manager.connection.status
-        guard manager.isEnabled else { return }
-        try manager.connection.startVPNTunnel()
-        updateStatusFromConnection()
     }
 
     private func waitForTunnelStartProgress(timeoutSeconds: TimeInterval) async -> NEVPNStatus {
@@ -371,6 +425,8 @@ enum VPNError: Error, LocalizedError {
     case sendFailed
     case noManager
     case backendNotReady(String)
+    case ipcTimeout
+    case sharedContainerUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -378,6 +434,8 @@ enum VPNError: Error, LocalizedError {
         case .sendFailed: return "Failed to send message to Extension"
         case .noManager: return "VPN manager not configured"
         case .backendNotReady(let message): return "VPN backend did not become ready: \(message)"
+        case .ipcTimeout: return "Timed out waiting for Packet Tunnel IPC response"
+        case .sharedContainerUnavailable: return "Shared app container is unavailable"
         }
     }
 }

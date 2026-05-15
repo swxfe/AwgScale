@@ -39,19 +39,64 @@ struct IpnNotify: Codable {
     let BrowseToURL: String?
     let LoginFinished: LoginFinished?
     let Health: HealthState?
+    let FilesWaiting: EmptyMessage?
+    let IncomingFiles: [TaildropIncomingFile]?
+    let OutgoingFiles: [TaildropOutgoingFile]?
 
     struct LoginFinished: Codable {}
 }
+
+struct EmptyMessage: Codable {}
 
 // MARK: - ipn.Prefs
 
 /// Maps to Go's ipn.Prefs.
 struct IpnPrefs: Codable {
     let WantRunning: Bool?
+    var RouteAll: Bool? = nil
+    var CorpDNS: Bool? = nil
+    var AmneziaWG: AmneziaWGPrefs? = nil
     let ExitNodeID: String?
     let ExitNodeAllowLANAccess: Bool?
     let ControlURL: String?
     let Hostname: String?
+}
+
+struct TaildropOutgoingFile: Codable, Identifiable {
+    let transferID: String
+    let PeerID: String?
+    let Name: String
+    let Started: String?
+    let DeclaredSize: Int64
+    let Sent: Int64
+    let Finished: Bool
+    let Succeeded: Bool
+
+    var id: String { transferID }
+
+    enum CodingKeys: String, CodingKey {
+        case transferID = "ID"
+        case PeerID
+        case Name
+        case Started
+        case DeclaredSize
+        case Sent
+        case Finished
+        case Succeeded
+    }
+}
+
+struct TaildropIncomingFile: Codable, Identifiable {
+    let Name: String
+    let Started: String?
+    let DeclaredSize: Int64?
+    let Received: Int64?
+    let PartialPath: String?
+    let FinalPath: String?
+    let Done: Bool?
+
+    var id: String { FinalPath ?? PartialPath ?? Name }
+    var isDone: Bool { Done == true }
 }
 
 // MARK: - ipn.MaskedPrefs
@@ -60,6 +105,10 @@ struct IpnPrefs: Codable {
 struct MaskedPrefs: Codable {
     var WantRunning: Bool?
     var WantRunningSet: Bool?
+    var RouteAll: Bool?
+    var RouteAllSet: Bool?
+    var CorpDNS: Bool?
+    var CorpDNSSet: Bool?
     var ExitNodeID: String?
     var ExitNodeIDSet: Bool?
     var ExitNodeAllowLANAccess: Bool?
@@ -256,7 +305,7 @@ struct AwgSyncApplyRequest: Codable {
     let nodeKey: String
     let timeout: Int
 
-    init(nodeKey: String, timeout: Int = 10) {
+    init(nodeKey: String, timeout: Int = 30) {
         self.nodeKey = nodeKey
         self.timeout = Swift.min(Swift.max(timeout, 1), 60)
     }

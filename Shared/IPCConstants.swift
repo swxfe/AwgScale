@@ -39,6 +39,18 @@ enum IPCConstants {
     static let keyTunnelHasDefaultRoute = "tunnel_has_default_route"
     /// Current profile ID.
     static let keyCurrentProfileID = "current_profile_id"
+    /// Current Taildrop outgoing transfer list as JSON string.
+    static let keyOutgoingFilesJSON = "outgoing_files_json"
+    /// Current Taildrop incoming transfer list as JSON string.
+    static let keyIncomingFilesJSON = "incoming_files_json"
+    /// Whether Taildrop has files buffered for the app.
+    static let keyTaildropFilesWaiting = "taildrop_files_waiting"
+    /// Monotonic revision incremented when a new Taildrop file arrives.
+    static let keyTaildropInboxRevision = "taildrop_inbox_revision"
+    /// Last Taildrop inbox revision that has already shown a foreground prompt.
+    static let keyTaildropPromptedInboxRevision = "taildrop_prompted_inbox_revision"
+    /// Last completed Taildrop file name for foreground prompts.
+    static let keyTaildropLastFileName = "taildrop_last_file_name"
 
     // MARK: - Darwin Notification names
 
@@ -63,6 +75,7 @@ let sharedContainerURL: URL? = FileManager.default.containerURL(
 struct IPCRequest: Codable {
     enum Command: String, Codable {
         case callLocalAPI
+        case callLocalAPIWithSharedFile
         case startLoginInteractive
         case prepareToStop
     }
@@ -73,7 +86,10 @@ struct IPCRequest: Codable {
     var method: String?
     var endpoint: String?
     var bodyBase64: String?  // Base64-encoded request body
+    var bodyFileRelativePath: String?
+    var bodyFileTransferID: String?
     var timeoutMillis: Int?
+    var readBody: Bool?
 }
 
 /// Response sent from Extension to App via sendProviderMessage completion handler.

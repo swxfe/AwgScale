@@ -6,7 +6,9 @@ import SwiftUI
 struct SubnetRoutesView: View {
     @EnvironmentObject var appState: AppState
     @State private var routes: [SubnetRoute] = []
+    @State private var useSubnetRoutes: Bool = true
     @State private var isLoading: Bool = true
+    @State private var isSavingSubnetPreference: Bool = false
     @State private var error: String?
     
     var body: some View {
@@ -25,55 +27,74 @@ struct SubnetRoutesView: View {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .foregroundColor(.red)
                 }
-            } else if routes.isEmpty {
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("No subnet routes available")
-                            .foregroundColor(.secondary)
-                        Text("Subnet routes allow you to access networks behind other devices. Routes must be advertised by another device and approved by an admin.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.vertical, 8)
-                }
             } else {
-                // Active routes
-                let activeRoutes = routes.filter { $0.approved && $0.enabled }
-                if !activeRoutes.isEmpty {
-                    Section {
-                        ForEach(activeRoutes) { route in
-                            SubnetRouteRow(route: route)
+                Section {
+                    Toggle(isOn: Binding(
+                        get: { useSubnetRoutes },
+                        set: { setUseSubnetRoutes($0) }
+                    )) {
+                        HStack {
+                            Image(systemName: "network")
+                                .foregroundColor(.accentColor)
+                                .frame(width: 24)
+                            Text("Use Subnet Routes")
                         }
-                    } header: {
-                        Text("Active Routes")
-                    } footer: {
-                        Text("Traffic to these subnets is routed through your overlay network.")
                     }
+                    .disabled(isSavingSubnetPreference)
+                } footer: {
+                    Text("Route traffic for approved subnet routes through your tailnet.")
                 }
-                
-                // Pending approval
-                let pendingRoutes = routes.filter { !$0.approved }
-                if !pendingRoutes.isEmpty {
+
+                if routes.isEmpty {
                     Section {
-                        ForEach(pendingRoutes) { route in
-                            SubnetRouteRow(route: route)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("No subnet routes available")
+                                .foregroundColor(.secondary)
+                            Text("Subnet routes allow you to access networks behind other devices. Routes must be advertised by another device and approved by an admin.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
-                    } header: {
-                        Text("Pending Approval")
-                    } footer: {
-                        Text("These routes need admin approval in the admin console.")
+                        .padding(.vertical, 8)
                     }
-                }
-                
-                // Disabled routes
-                let disabledRoutes = routes.filter { $0.approved && !$0.enabled }
-                if !disabledRoutes.isEmpty {
-                    Section {
-                        ForEach(disabledRoutes) { route in
-                            SubnetRouteRow(route: route)
+                } else {
+                    // Active routes
+                    let activeRoutes = routes.filter { $0.approved && $0.enabled }
+                    if !activeRoutes.isEmpty {
+                        Section {
+                            ForEach(activeRoutes) { route in
+                                SubnetRouteRow(route: route)
+                            }
+                        } header: {
+                            Text("Active Routes")
+                        } footer: {
+                            Text("Traffic to these subnets is routed through your overlay network.")
                         }
-                    } header: {
-                        Text("Disabled Routes")
+                    }
+
+                    // Pending approval
+                    let pendingRoutes = routes.filter { !$0.approved }
+                    if !pendingRoutes.isEmpty {
+                        Section {
+                            ForEach(pendingRoutes) { route in
+                                SubnetRouteRow(route: route)
+                            }
+                        } header: {
+                            Text("Pending Approval")
+                        } footer: {
+                            Text("These routes need admin approval in the admin console.")
+                        }
+                    }
+
+                    // Disabled routes
+                    let disabledRoutes = routes.filter { $0.approved && !$0.enabled }
+                    if !disabledRoutes.isEmpty {
+                        Section {
+                            ForEach(disabledRoutes) { route in
+                                SubnetRouteRow(route: route)
+                            }
+                        } header: {
+                            Text("Disabled Routes")
+                        }
                     }
                 }
             }
@@ -99,10 +120,8 @@ struct SubnetRoutesView: View {
         .refreshable {
             await loadRoutes()
         }
-        .onAppear {
-            Task {
-                await loadRoutes()
-            }
+        .task {
+            await loadRoutes()
         }
     }
     
@@ -122,9 +141,10 @@ struct SubnetRoutesView: View {
         
         // Parse routes from prefs/status
         do {
-            let endpoint = "/localapi/v0/status"
-            let resp = try await vpn.callLocalAPI(method: "GET", endpoint: endpoint)
-            let bodyData = try resp.bodyData(endpoint: endpoint)
+            let client = LocalAPIClient.vpn(vpn)
+            let bodyData = try await client.statusJSON()
+            let prefs = try? await client.ipnPrefs()
+            let routeAll = prefs?.RouteAll ?? true
             
             if let json = try JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
                let peer = json["Peer"] as? [String: Any] {
@@ -140,7 +160,7 @@ struct SubnetRoutesView: View {
                                     cidr: route,
                                     advertisedBy: hostName,
                                     approved: true,
-                                    enabled: true
+                                    enabled: routeAll
                                 ))
                             }
                         }
@@ -148,11 +168,38 @@ struct SubnetRoutesView: View {
                 }
             }
             
+            useSubnetRoutes = routeAll
             routes = allRoutes.sorted { $0.cidr < $1.cidr }
             isLoading = false
         } catch {
             self.error = "Failed to load routes: \(error.localizedDescription)"
             isLoading = false
+        }
+    }
+
+    private func setUseSubnetRoutes(_ enabled: Bool) {
+        guard !isSavingSubnetPreference, let vpn = appState.vpnManager else { return }
+        let previous = useSubnetRoutes
+        let previousRoutes = routes
+        useSubnetRoutes = enabled
+        routes = routes.map { $0.withEnabled(enabled) }
+        isSavingSubnetPreference = true
+
+        Task {
+            do {
+                try await LocalAPIClient.vpn(vpn).setUseSubnetRoutes(enabled)
+                await MainActor.run {
+                    isSavingSubnetPreference = false
+                    error = nil
+                }
+            } catch {
+                await MainActor.run {
+                    useSubnetRoutes = previous
+                    routes = previousRoutes
+                    self.error = "Failed to update subnet route preference: \(error.localizedDescription)"
+                    isSavingSubnetPreference = false
+                }
+            }
         }
     }
 }
@@ -228,6 +275,10 @@ struct SubnetRoute: Identifiable {
     let advertisedBy: String
     let approved: Bool
     let enabled: Bool
+
+    func withEnabled(_ enabled: Bool) -> SubnetRoute {
+        SubnetRoute(id: id, cidr: cidr, advertisedBy: advertisedBy, approved: approved, enabled: enabled)
+    }
 }
 
 #Preview {

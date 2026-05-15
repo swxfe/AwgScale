@@ -4,6 +4,9 @@ import SwiftUI
 struct MainView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var vpnManager: VPNManager
+    @State private var showTaildropPrompt = false
+    @State private var openTaildropFromPrompt = false
+    @State private var promptedTaildropRevision = 0
 
     /// Currently selected exit node (if any).
     private var currentExitNode: PeerNode? {
@@ -59,6 +62,19 @@ struct MainView: View {
                         .labelsHidden()
                         .disabled(appState.pendingWantRunning != nil)
                     }
+
+                    if vpnIsActive {
+                        NavigationLink(destination: HealthView()) {
+                            HStack {
+                                Image(systemName: "heart.text.square")
+                                    .foregroundColor(.accentColor)
+                                    .frame(width: 24)
+                                Text("Health")
+                                Spacer()
+                                HealthBadge(health: appState.health)
+                            }
+                        }
+                    }
                 }
 
                 // Exit Node section
@@ -89,29 +105,6 @@ struct MainView: View {
                                 }
                                 Spacer()
                             }
-                        }
-                    }
-                    
-                    // Health status
-                    NavigationLink(destination: HealthView()) {
-                        HStack {
-                            Image(systemName: "heart.text.square")
-                                .foregroundColor(.accentColor)
-                                .frame(width: 24)
-                            Text("Health")
-                            Spacer()
-                            HealthBadge(health: appState.health)
-                        }
-                    }
-                    
-                    // Taildrop
-                    NavigationLink(destination: TaildropView()) {
-                        HStack {
-                            Image(systemName: "arrow.up.arrow.down.circle")
-                                .foregroundColor(.accentColor)
-                                .frame(width: 24)
-                            Text("Taildrop")
-                            Spacer()
                         }
                     }
                 }
@@ -160,6 +153,12 @@ struct MainView: View {
                 }
             }
             .navigationTitle("AwgScale")
+            .background(
+                NavigationLink(destination: TaildropView(), isActive: $openTaildropFromPrompt) {
+                    EmptyView()
+                }
+                .hidden()
+            )
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     NavigationLink(destination: SettingsView()) {
@@ -167,7 +166,30 @@ struct MainView: View {
                     }
                 }
             }
+            .onAppear {
+                presentTaildropPromptIfNeeded()
+            }
+            .onChange(of: appState.taildropInboxRevision) { _ in
+                presentTaildropPromptIfNeeded()
+            }
+            .alert("Taildrop File Received", isPresented: $showTaildropPrompt) {
+                Button("View Files") {
+                    openTaildropFromPrompt = true
+                }
+                Button("Later", role: .cancel) {}
+            } message: {
+                Text(appState.taildropPromptMessage)
+            }
         }
+    }
+
+    private func presentTaildropPromptIfNeeded() {
+        let revision = appState.taildropInboxRevision
+        guard revision > 0, revision != promptedTaildropRevision else { return }
+        guard revision > appState.taildropPromptedInboxRevision else { return }
+        promptedTaildropRevision = revision
+        appState.markTaildropPromptPresented(revision: revision)
+        showTaildropPrompt = true
     }
 }
 

@@ -314,6 +314,9 @@ struct PingView: View {
     @State private var pingResults: [PingResult] = []
     @State private var isPinging: Bool = false
     @State private var pingCount: Int = 0
+    @State private var pingTask: Task<Void, Never>?
+
+    private let maxSamples = 60
     
     var body: some View {
         List {
@@ -338,14 +341,13 @@ struct PingView: View {
             
             Section {
                 Button {
-                    startPing()
+                    isPinging ? stopPing() : startPing()
                 } label: {
                     HStack {
                         Spacer()
                         if isPinging {
-                            ProgressView()
-                                .padding(.trailing, 8)
-                            Text("Pinging...")
+                            Image(systemName: "stop.fill")
+                            Text("Stop Ping")
                         } else {
                             Image(systemName: "waveform.path")
                             Text("Start Ping")
@@ -353,46 +355,36 @@ struct PingView: View {
                         Spacer()
                     }
                 }
-                .disabled(isPinging || peer.primaryIPv4Address == nil)
+                .disabled(peer.primaryIPv4Address == nil)
             }
             
             if !pingResults.isEmpty {
                 Section {
-                    ForEach(pingResults) { result in
-                        HStack {
-                            Text("#\(result.seq)")
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundColor(.secondary)
-                                .frame(width: 40, alignment: .leading)
-                            
-                            Spacer()
-                            
-                            if let latency = result.latencyMs {
-                                Text(String(format: "%.1f ms", latency))
-                                    .font(.system(.body, design: .monospaced))
-                                    .foregroundColor(latencyColor(latency))
-                            } else if let error = result.error {
-                                Text(error)
-                                    .font(.caption)
-                                    .foregroundColor(.red)
-                            }
-                        }
+                    PingLatencyChart(results: pingResults)
+                        .frame(height: 230)
+                        .padding(.vertical, 8)
+
+                    PingStatsView(results: pingResults, sent: pingCount)
+                } header: {
+                    Text("Latency")
+                }
+
+                Section {
+                    ForEach(pingResults.suffix(8).reversed()) { result in
+                        PingResultRow(result: result)
                     }
                 } header: {
-                    Text("Results")
-                } footer: {
-                    if pingCount > 0 {
-                        let successful = pingResults.filter { $0.latencyMs != nil }
-                        let avgLatency = successful.compactMap(\.latencyMs).reduce(0, +) / Double(max(successful.count, 1))
-                        Text("Sent: \(pingCount) | Received: \(successful.count) | Avg: \(String(format: "%.1f", avgLatency)) ms")
-                    }
+                    Text("Recent")
                 }
             }
         }
         .navigationTitle("Ping")
         .navigationBarTitleDisplayMode(.inline)
+        .onDisappear {
+            stopPing()
+        }
     }
-    
+
     private func startPing() {
         guard let vpn = appState.vpnManager else { return }
         guard let targetIP = peer.primaryIPv4Address else {
@@ -403,56 +395,84 @@ struct PingView: View {
             pingResults = [PingResult(seq: 1, error: "VPN is not ready")]
             return
         }
-        
+
         isPinging = true
         pingResults = []
         pingCount = 0
-        
-        Task {
-            // Ping 5 times
-            for seq in 1...5 {
-                pingCount = seq
-                
+        pingTask?.cancel()
+
+        pingTask = Task {
+            var seq = 0
+            while !Task.isCancelled {
+                seq += 1
+
                 do {
                     let canContinue = await MainActor.run {
                         canStartPing(vpn: vpn)
                     }
                     guard canContinue else {
                         await MainActor.run {
-                            pingResults.append(PingResult(seq: seq, error: "VPN stopped while pinging"))
+                            appendPingResult(PingResult(seq: seq, error: "VPN stopped while pinging"))
+                            stopPing()
                         }
                         break
                     }
 
-                    let endpoint = "/localapi/v0/ping?ip=\(targetIP)&type=disco"
-                    let resp = try await vpn.callLocalAPI(method: "POST", endpoint: endpoint, timeout: 10000)
-                    let result = try resp.decodedBody(PingAPIResponse.self, endpoint: endpoint)
+                    let result = try await pingWithTransientRetry(vpn: vpn, ip: targetIP)
                     if let error = result.Err, !error.isEmpty {
                         await MainActor.run {
-                            pingResults.append(PingResult(seq: seq, error: error))
+                            appendPingResult(PingResult(seq: seq, error: error))
                         }
                     } else if let latency = result.LatencySeconds {
                         await MainActor.run {
-                            pingResults.append(PingResult(seq: seq, latencyMs: latency * 1000))
+                            appendPingResult(PingResult(seq: seq, latencyMs: latency * 1000))
                         }
                     } else {
                         await MainActor.run {
-                            pingResults.append(PingResult(seq: seq, error: "Invalid response"))
+                            appendPingResult(PingResult(seq: seq, error: "Invalid response"))
                         }
                     }
                 } catch {
                     await MainActor.run {
-                        pingResults.append(PingResult(seq: seq, error: error.localizedDescription))
+                        appendPingResult(PingResult(seq: seq, error: error.localizedDescription))
                     }
                 }
-                
-                // Wait 1 second between pings
+
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
-            
+
             await MainActor.run {
                 isPinging = false
+                pingTask = nil
             }
+        }
+    }
+
+    private func pingWithTransientRetry(vpn: VPNManager, ip: String) async throws -> PingAPIResponse {
+        do {
+            return try await LocalAPIClient.vpn(vpn).ping(ip: ip)
+        } catch {
+            guard isTransientPingTimeout(error) else { throw error }
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            return try await LocalAPIClient.vpn(vpn).ping(ip: ip, timeout: 15000)
+        }
+    }
+
+    private func isTransientPingTimeout(_ error: Error) -> Bool {
+        error.localizedDescription.lowercased().contains("timeout")
+    }
+
+    private func stopPing() {
+        pingTask?.cancel()
+        pingTask = nil
+        isPinging = false
+    }
+
+    private func appendPingResult(_ result: PingResult) {
+        pingCount = result.seq
+        pingResults.append(result)
+        if pingResults.count > maxSamples {
+            pingResults.removeFirst(pingResults.count - maxSamples)
         }
     }
 
@@ -470,17 +490,402 @@ struct PingView: View {
     }
 }
 
+struct PingLatencyChart: View {
+    let results: [PingResult]
+
+    private var visibleResults: [PingResult] {
+        Array(results.suffix(50))
+    }
+
+    private var latencies: [Double] {
+        visibleResults.compactMap(\.latencyMs)
+    }
+
+    private var maxLatency: Double {
+        niceCeiling(max(20, (latencies.max() ?? 10) * 1.25))
+    }
+
+    private var latestText: String {
+        guard let latest = visibleResults.last else { return "--" }
+        if let latency = latest.latencyMs {
+            return String(format: "%.1f ms", latency)
+        }
+        return "Lost"
+    }
+
+    private var latestColor: Color {
+        guard let latest = visibleResults.last?.latencyMs else { return .red }
+        return latencyColor(latest)
+    }
+
+    private var averageText: String {
+        guard !latencies.isEmpty else { return "--" }
+        let average = latencies.reduce(0, +) / Double(latencies.count)
+        return String(format: "%.1f ms", average)
+    }
+
+    private var lossText: String {
+        guard !visibleResults.isEmpty else { return "--" }
+        let lost = visibleResults.filter { $0.latencyMs == nil }.count
+        if lost == 0 { return "0%" }
+        let percent = Double(lost) / Double(visibleResults.count) * 100
+        return String(format: "%.0f%%", percent)
+    }
+
+    private var axisValues: [Double] {
+        [maxLatency, maxLatency * 0.75, maxLatency * 0.5, maxLatency * 0.25, 0]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                metric(title: "Current", value: latestText, color: latestColor, prominent: true)
+
+                Spacer()
+
+                metric(title: "Average", value: averageText)
+                metric(title: "Loss", value: lossText, color: lossText == "0%" ? .secondary : .red)
+            }
+
+            GeometryReader { geometry in
+                let labelWidth: CGFloat = 48
+                let plotHeight = max(geometry.size.height - 18, 1)
+                let plotWidth = max(geometry.size.width - labelWidth, 1)
+
+                VStack(spacing: 4) {
+                    HStack(alignment: .top, spacing: 0) {
+                        ZStack(alignment: .topLeading) {
+                            chartGrid(width: plotWidth, height: plotHeight)
+                            latencyArea(width: plotWidth, height: plotHeight)
+                            latencyLine(width: plotWidth, height: plotHeight)
+                            lossMarkers(width: plotWidth, height: plotHeight)
+                            latencyPoints(width: plotWidth, height: plotHeight)
+                        }
+                        .frame(width: plotWidth, height: plotHeight)
+
+                        yAxisLabels(height: plotHeight)
+                            .frame(width: labelWidth, height: plotHeight)
+                    }
+
+                    HStack {
+                        Text(visibleResults.first.map { "#\($0.seq)" } ?? "")
+                        Spacer()
+                        Text("\(visibleResults.count) samples")
+                        Spacer()
+                        Text(visibleResults.last.map { "#\($0.seq)" } ?? "")
+                    }
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .padding(.trailing, labelWidth)
+                }
+            }
+            .frame(height: 164)
+
+            HStack(spacing: 12) {
+                PingLegendItem(color: .green, label: "< 50 ms")
+                PingLegendItem(color: .orange, label: "50-150 ms")
+                PingLegendItem(color: .red, label: "Slow/Lost")
+            }
+            .font(.caption2)
+            .foregroundColor(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func metric(title: String, value: String, color: Color = .secondary, prominent: Bool = false) -> some View {
+        VStack(alignment: prominent ? .leading : .trailing, spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.system(prominent ? .title3 : .caption, design: .monospaced))
+                .fontWeight(prominent ? .semibold : .regular)
+                .foregroundColor(color)
+        }
+    }
+
+    @ViewBuilder
+    private func chartGrid(width: CGFloat, height: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(0..<5, id: \.self) { index in
+                Rectangle()
+                    .fill(Color(.separator).opacity(index == 4 ? 0.34 : 0.18))
+                    .frame(width: width, height: 1)
+                    .offset(y: height * CGFloat(index) / 4)
+            }
+
+            ForEach(0..<4, id: \.self) { index in
+                Rectangle()
+                    .fill(Color(.separator).opacity(0.10))
+                    .frame(width: 1, height: height)
+                    .offset(x: width * CGFloat(index) / 3)
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func latencyArea(width: CGFloat, height: CGFloat) -> some View {
+        Path { path in
+            var segmentStart: CGPoint?
+            var previousPoint: CGPoint?
+
+            for (index, result) in visibleResults.enumerated() {
+                guard let latency = result.latencyMs else {
+                    if let segmentStart, let previousPoint {
+                        path.addLine(to: CGPoint(x: previousPoint.x, y: height))
+                        path.addLine(to: CGPoint(x: segmentStart.x, y: height))
+                        path.closeSubpath()
+                    }
+                    segmentStart = nil
+                    previousPoint = nil
+                    continue
+                }
+
+                let point = chartPoint(index: index, latency: latency, width: width, height: height)
+                if segmentStart == nil {
+                    segmentStart = point
+                    path.move(to: CGPoint(x: point.x, y: height))
+                    path.addLine(to: point)
+                } else {
+                    path.addLine(to: point)
+                }
+                previousPoint = point
+            }
+
+            if let segmentStart, let previousPoint {
+                path.addLine(to: CGPoint(x: previousPoint.x, y: height))
+                path.addLine(to: CGPoint(x: segmentStart.x, y: height))
+                path.closeSubpath()
+            }
+        }
+        .fill(
+            LinearGradient(
+                colors: [Color.accentColor.opacity(0.20), Color.accentColor.opacity(0.02)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func latencyLine(width: CGFloat, height: CGFloat) -> some View {
+        Path { path in
+            var isDrawingSegment = false
+
+            for (index, result) in visibleResults.enumerated() {
+                guard let latency = result.latencyMs else {
+                    isDrawingSegment = false
+                    continue
+                }
+
+                let point = chartPoint(index: index, latency: latency, width: width, height: height)
+                if isDrawingSegment {
+                    path.addLine(to: point)
+                } else {
+                    path.move(to: point)
+                    isDrawingSegment = true
+                }
+            }
+        }
+        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func latencyPoints(width: CGFloat, height: CGFloat) -> some View {
+        ForEach(Array(visibleResults.enumerated()), id: \.element.id) { index, result in
+            if let latency = result.latencyMs {
+                let point = chartPoint(index: index, latency: latency, width: width, height: height)
+                Circle()
+                    .fill(latencyColor(latency))
+                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
+                    .frame(width: 9, height: 9)
+                    .position(point)
+                    .accessibilityLabel("Ping \(result.seq), \(String(format: "%.1f", latency)) milliseconds")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func lossMarkers(width: CGFloat, height: CGFloat) -> some View {
+        ForEach(Array(visibleResults.enumerated()), id: \.element.id) { index, result in
+            if result.latencyMs == nil {
+                let x = chartX(index: index, width: width)
+                VStack(spacing: 0) {
+                    Rectangle()
+                        .fill(Color.red.opacity(0.18))
+                        .frame(width: 2, height: max(height - 18, 1))
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundColor(.red)
+                        .background(Circle().fill(Color(.systemBackground)))
+                }
+                .frame(width: 16, height: height, alignment: .bottom)
+                .position(x: x, y: height / 2)
+                .accessibilityLabel("Ping \(result.seq), lost")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func yAxisLabels(height: CGFloat) -> some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            ForEach(Array(axisValues.enumerated()), id: \.offset) { index, value in
+                Text(index == axisValues.count - 1 ? "0 ms" : String(format: "%.0f", value))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                if index < axisValues.count - 1 {
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .frame(height: height)
+    }
+
+    private func chartPoint(index: Int, latency: Double, width: CGFloat, height: CGFloat) -> CGPoint {
+        let clampedLatency = min(max(latency, 0), maxLatency)
+        return CGPoint(
+            x: chartX(index: index, width: width),
+            y: height - CGFloat(clampedLatency / maxLatency) * height
+        )
+    }
+
+    private func chartX(index: Int, width: CGFloat) -> CGFloat {
+        guard visibleResults.count > 1 else { return width / 2 }
+        return width * CGFloat(index) / CGFloat(visibleResults.count - 1)
+    }
+
+    private func niceCeiling(_ value: Double) -> Double {
+        if value <= 50 { return 50 }
+        if value <= 100 { return 100 }
+        if value <= 200 { return 200 }
+        if value <= 500 { return 500 }
+        return ceil(value / 500) * 500
+    }
+
+    private func latencyColor(_ ms: Double) -> Color {
+        if ms < 50 { return .green }
+        if ms < 150 { return .orange }
+        return .red
+    }
+}
+
+struct PingLegendItem: View {
+    let color: Color
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text(label)
+        }
+    }
+}
+
+struct PingStatsView: View {
+    let results: [PingResult]
+    let sent: Int
+
+    private var latencies: [Double] {
+        results.compactMap(\.latencyMs)
+    }
+
+    private var received: Int { latencies.count }
+    private var lossPercent: Double {
+        guard sent > 0 else { return 0 }
+        return Double(max(sent - received, 0)) / Double(sent) * 100
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack {
+                PingStatCell(title: "Sent", value: "\(sent)")
+                PingStatCell(title: "Recv", value: "\(received)")
+                PingStatCell(title: "Loss", value: String(format: "%.0f%%", lossPercent))
+            }
+            HStack {
+                PingStatCell(title: "Min", value: formatted(latencies.min()))
+                PingStatCell(title: "Avg", value: formatted(averageLatency))
+                PingStatCell(title: "Max", value: formatted(latencies.max()))
+            }
+        }
+    }
+
+    private var averageLatency: Double? {
+        guard !latencies.isEmpty else { return nil }
+        return latencies.reduce(0, +) / Double(latencies.count)
+    }
+
+    private func formatted(_ latency: Double?) -> String {
+        guard let latency else { return "--" }
+        return String(format: "%.1f ms", latency)
+    }
+}
+
+struct PingStatCell: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(title)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.system(.caption, design: .monospaced))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+struct PingResultRow: View {
+    let result: PingResult
+
+    var body: some View {
+        HStack {
+            Text("#\(result.seq)")
+                .font(.system(.body, design: .monospaced))
+                .foregroundColor(.secondary)
+                .frame(width: 48, alignment: .leading)
+
+            Spacer()
+
+            if let latency = result.latencyMs {
+                Text(String(format: "%.1f ms", latency))
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundColor(latencyColor(latency))
+            } else if let error = result.error {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.trailing)
+            }
+        }
+    }
+
+    private func latencyColor(_ ms: Double) -> Color {
+        if ms < 50 { return .green }
+        if ms < 150 { return .orange }
+        return .red
+    }
+}
+
 /// Single ping result.
 struct PingResult: Identifiable {
     let id = UUID()
     let seq: Int
     var latencyMs: Double? = nil
     var error: String? = nil
-}
-
-private struct PingAPIResponse: Decodable {
-    let Err: String?
-    let LatencySeconds: Double?
 }
 
 #Preview {

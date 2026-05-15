@@ -42,6 +42,7 @@ struct AboutView: View {
             // Version info
             Section {
                 InfoRow(label: "Version", value: buildInfo)
+                InfoRow(label: "tailscale-awg", value: appState.tailscaleAwgVersion)
                 InfoRow(label: "iOS Version", value: ProcessInfo.processInfo.operatingSystemVersionString)
                 InfoRow(label: "Device", value: getDeviceModel())
                 
