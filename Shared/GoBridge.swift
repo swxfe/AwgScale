@@ -187,6 +187,7 @@ enum GoBridge {
 
     /// Tell Darwin netmon which physical interface currently carries underlay traffic.
     static func updateDefaultRouteInterface(_ ifName: String) {
+        GoAppContext.setDefaultRouteInterface(ifName)
         LibtailscaleUpdateLastKnownDefaultRouteInterface(ifName)
     }
 

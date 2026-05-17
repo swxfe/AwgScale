@@ -53,6 +53,7 @@ type tunnelConfigManager struct {
 	cb                        TunnelConfigCallback
 	lastConfigJSON            []byte
 	defaultRouteExcludeRoutes func() []netip.Prefix
+	exitNodeDNSServers        func() []netip.Addr
 }
 
 func (m *tunnelConfigManager) setDefaultRouteExcludeRoutes(fn func() []netip.Prefix) {
@@ -69,6 +70,30 @@ func (m *tunnelConfigManager) getDefaultRouteExcludeRoutes() []netip.Prefix {
 		return nil
 	}
 	return fn()
+}
+
+func (m *tunnelConfigManager) setExitNodeDNSServers(fn func() []netip.Addr) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.exitNodeDNSServers = fn
+}
+
+func (m *tunnelConfigManager) getExitNodeDNSServers() []string {
+	m.mu.Lock()
+	fn := m.exitNodeDNSServers
+	m.mu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	addrs := fn()
+	servers := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		server := addr.String()
+		if !tailscaleServiceDNSServers[server] {
+			servers = append(servers, server)
+		}
+	}
+	return servers
 }
 
 func (m *tunnelConfigManager) setCallback(cb TunnelConfigCallback) {
@@ -146,8 +171,13 @@ func (m *tunnelConfigManager) onConfigUpdate(rcfg *router.Config, dcfg *dns.OSCo
 		}
 	}
 	if hasDefaultRoute && dnsServersAreTailscaleServiceIPs(tc.DNSServers) {
-		log.Printf("exit node: using public DNS servers for NetworkExtension DNS to avoid PeerAPI DNS proxy timeout")
-		tc.DNSServers = append([]string(nil), exitNodePublicDNSServers...)
+		if platformDNSServers := m.getExitNodeDNSServers(); len(platformDNSServers) > 0 {
+			log.Printf("exit node: using platform DNS servers for NetworkExtension DNS to avoid PeerAPI DNS proxy timeout")
+			tc.DNSServers = platformDNSServers
+		} else {
+			log.Printf("exit node: using public DNS servers for NetworkExtension DNS because platform DNS is unavailable")
+			tc.DNSServers = append([]string(nil), exitNodePublicDNSServers...)
+		}
 	}
 
 	log.Printf("tunnel config: localAddrs=%d routes=%d excludeRoutes=%d dnsServers=%d searchDomains=%d matchDomains=%d mtu=%d hasDefaultRoute=%t",

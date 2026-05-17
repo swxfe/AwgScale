@@ -19,9 +19,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private let logger = Logger(subsystem: IPCConstants.appBundleID, category: "tunnel")
     private let defaultRouteMonitorQueue = DispatchQueue(label: "top.yesican.awgscale.default-route-monitor")
     private var defaultRouteMonitor: NWPathMonitor?
-    private let packetBridgeStallThreshold: TimeInterval = 10
+    private let packetBridgeStallThreshold: TimeInterval = 30
     private let packetBridgeProgressLogInterval: TimeInterval = 5
-    private let underlayRebindCooldown: TimeInterval = 60
+    private let underlayRefreshCooldown: TimeInterval = 60
     private var notifyHandle: NotificationHandle?
     private var tunnelConfigCallback: AnyObject?
     private let packetReadQueue = DispatchQueue(label: "top.yesican.awgscale.packetflow.read", qos: .userInitiated)
@@ -43,7 +43,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private var lastPacketsToSystemProgressTime = Date()
     private var packetsFromSystemAtLastToSystemProgress: UInt64 = 0
     private var lastPacketBridgeProgressLogTime = Date.distantPast
-    private var lastUnderlayRebindTime: Date?
+    private var lastUnderlayRefreshTime: Date?
     private var hasPublishedBackendSnapshot = false
     private var notifiedIncomingTaildropFiles: Set<String> = []
 
@@ -56,7 +56,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         logger.log("startTunnel: beginning")
-        logger.notice("runtime marker awgscale=0.1.3 build=4 recovery=keepalive-kick+receive-restart-fast10")
+        logger.notice("runtime marker awgscale=0.1.6 build=7 recovery=official-soft-refresh-fast30-cd60 refactor=dns-subnet-tka")
         resetTunnelLifecycleState()
         sharedDefaults?.removeObject(forKey: IPCConstants.keyLastError)
         sharedDefaults?.set(false, forKey: IPCConstants.keyTunnelHasDefaultRoute)
@@ -632,7 +632,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             self?.lastPacketsToSystemProgressTime = Date()
             self?.packetsFromSystemAtLastToSystemProgress = self?.packetsFromSystem ?? 0
             self?.lastPacketBridgeProgressLogTime = Date.distantPast
-            self?.lastUnderlayRebindTime = nil
+            self?.lastUnderlayRefreshTime = nil
         }
         postDarwinNotification(IPCConstants.notifyStateChanged)
     }
@@ -980,17 +980,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         guard stalledFor >= packetBridgeStallThreshold else { return }
         guard incomingSinceProgress >= 16 else { return }
 
-        if let lastUnderlayRebindTime,
-           now.timeIntervalSince(lastUnderlayRebindTime) < underlayRebindCooldown {
+          if let lastUnderlayRefreshTime,
+              now.timeIntervalSince(lastUnderlayRefreshTime) < underlayRefreshCooldown {
             return
         }
 
-        lastUnderlayRebindTime = now
+          lastUnderlayRefreshTime = now
         lastPacketsToSystemProgressTime = now
         packetsFromSystemAtLastToSystemProgress = packetsFromSystem
 
         let reason = "exit-node-stall system-to-go=\(packetsFromSystem) go-to-system=\(packetsToSystem) stalled=\(Int(stalledFor))s"
-        logger.error("packet bridge appears stalled; rebinding underlay: \(reason, privacy: .public)")
+        logger.error("packet bridge appears stalled; refreshing underlay: \(reason, privacy: .public)")
         DispatchQueue.global(qos: .utility).async {
             GoBridge.rebindUnderlay(reason: reason)
         }

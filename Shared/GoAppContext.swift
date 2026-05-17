@@ -18,6 +18,14 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
     private let logger = Logger(subsystem: IPCConstants.appBundleID, category: "go")
     private let keychainGroups = GoAppContext.keychainGroupCandidates()
     private let fallbackPreferences = sharedDefaults ?? UserDefaults.standard
+    private static let dnsLock = NSLock()
+    private static var defaultRouteInterfaceName: String?
+
+    static func setDefaultRouteInterface(_ ifName: String) {
+        dnsLock.lock()
+        defaultRouteInterfaceName = ifName
+        dnsLock.unlock()
+    }
 
     private static func keychainGroupCandidates(includeLegacy: Bool = false) -> [String?] {
         let baseGroup = IPCConstants.keychainGroupID
@@ -345,8 +353,8 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
     }
 
     func getPlatformDNSConfig() -> String {
-        // iOS Extension doesn't have easy access to system DNS config.
-        // Return empty; the Go backend handles this gracefully.
+        // iOS does not expose the default resolver server list through public Swift APIs.
+        // Return empty so Go can use the NetworkExtension-safe exit-node fallback.
         return ""
     }
 

@@ -136,40 +136,51 @@ struct SubnetRoutesView: View {
         isLoading = true
         error = nil
         
-        // Routes come from the network map - check peers for advertised routes
         var allRoutes: [SubnetRoute] = []
         
-        // Parse routes from prefs/status
         do {
             let client = LocalAPIClient.vpn(vpn)
-            let bodyData = try await client.statusJSON()
+            let status = try await client.status()
             let prefs = try? await client.ipnPrefs()
             let routeAll = prefs?.RouteAll ?? true
-            
-            if let json = try JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
-               let peer = json["Peer"] as? [String: Any] {
-                for (_, peerValue) in peer {
-                    if let peerInfo = peerValue as? [String: Any],
-                       let primaryRoutes = peerInfo["PrimaryRoutes"] as? [String],
-                       let hostName = peerInfo["HostName"] as? String {
-                        for route in primaryRoutes {
-                            // Skip 0.0.0.0/0 and ::/0 (exit node routes)
-                            if route != "0.0.0.0/0" && route != "::/0" {
-                                allRoutes.append(SubnetRoute(
-                                    id: "\(hostName)-\(route)",
-                                    cidr: route,
-                                    advertisedBy: hostName,
-                                    approved: true,
-                                    enabled: routeAll
-                                ))
-                            }
-                        }
+
+            for (peerID, peer) in status.Peer ?? [:] {
+                for route in peer.PrimaryRoutes ?? [] where SubnetRoute.isSubnetRoute(route) {
+                    allRoutes.append(SubnetRoute(
+                        id: "\(peerID)-\(route)",
+                        cidr: route,
+                        advertisedBy: peer.displayName,
+                        approved: true,
+                        enabled: routeAll,
+                        online: peer.Online ?? false,
+                        active: peer.Active ?? false,
+                        os: peer.OS
+                    ))
+                }
+            }
+
+            if allRoutes.isEmpty {
+                for (peerID, peer) in status.Peer ?? [:] {
+                    for route in peer.AllowedIPs ?? [] where SubnetRoute.isSubnetRoute(route) {
+                        allRoutes.append(SubnetRoute(
+                            id: "\(peerID)-\(route)",
+                            cidr: route,
+                            advertisedBy: peer.displayName,
+                            approved: true,
+                            enabled: routeAll,
+                            online: peer.Online ?? false,
+                            active: peer.Active ?? false,
+                            os: peer.OS
+                        ))
                     }
                 }
             }
             
             useSubnetRoutes = routeAll
-            routes = allRoutes.sorted { $0.cidr < $1.cidr }
+            routes = allRoutes.sorted {
+                if $0.cidr == $1.cidr { return $0.advertisedBy < $1.advertisedBy }
+                return $0.cidr < $1.cidr
+            }
             isLoading = false
         } catch {
             self.error = "Failed to load routes: \(error.localizedDescription)"
@@ -220,6 +231,11 @@ struct SubnetRouteRow: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
+                    if let os = route.os, !os.isEmpty {
+                        Text(os)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                     
                     statusBadge
                 }
@@ -258,9 +274,17 @@ struct SubnetRouteRow: View {
         if !route.approved {
             Image(systemName: "clock")
                 .foregroundColor(.orange)
+        } else if !route.online {
+            Text("Offline")
+                .font(.caption2)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.secondary.opacity(0.15))
+                .foregroundColor(.secondary)
+                .cornerRadius(4)
         } else if route.enabled {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundColor(.green)
+            Image(systemName: route.online ? "checkmark.circle.fill" : "wifi.slash")
+                .foregroundColor(route.online ? .green : .secondary)
         } else {
             Image(systemName: "xmark.circle")
                 .foregroundColor(.gray)
@@ -275,9 +299,21 @@ struct SubnetRoute: Identifiable {
     let advertisedBy: String
     let approved: Bool
     let enabled: Bool
+    let online: Bool
+    let active: Bool
+    let os: String?
 
     func withEnabled(_ enabled: Bool) -> SubnetRoute {
-        SubnetRoute(id: id, cidr: cidr, advertisedBy: advertisedBy, approved: approved, enabled: enabled)
+        SubnetRoute(id: id, cidr: cidr, advertisedBy: advertisedBy, approved: approved, enabled: enabled, online: online, active: active, os: os)
+    }
+
+    static func isSubnetRoute(_ route: String) -> Bool {
+        let route = route.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !route.isEmpty,
+              route != "0.0.0.0/0",
+              route != "::/0",
+              !route.hasPrefix("100.64.") else { return false }
+        return route.contains("/")
     }
 }
 

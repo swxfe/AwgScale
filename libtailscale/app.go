@@ -19,16 +19,19 @@ import (
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnauth"
 	"tailscale.com/ipn/ipnlocal"
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/ipn/localapi"
 	"tailscale.com/logtail"
 	"tailscale.com/net/netmon"
 	"tailscale.com/net/netns"
 	"tailscale.com/net/tsdial"
 	"tailscale.com/paths"
+	"tailscale.com/tailcfg"
 	"tailscale.com/tsd"
 	"tailscale.com/types/key"
 	"tailscale.com/types/logger"
 	"tailscale.com/types/logid"
+	"tailscale.com/types/views"
 	"tailscale.com/util/eventbus"
 	"tailscale.com/util/syspolicy/rsop"
 	"tailscale.com/util/syspolicy/setting"
@@ -220,6 +223,7 @@ func (a *App) newBackend(dataDir string, appCtx AppContext, store *stateStore) (
 	b.netMon = netMon
 	b.setupLogs(dataDir, logID, logf, sys.HealthTracker.Get())
 	a.tunnelConfigMgr.setDefaultRouteExcludeRoutes(b.defaultRouteExcludeRoutes)
+	a.tunnelConfigMgr.setExitNodeDNSServers(b.platformDNSServers)
 
 	dialer := new(tsdial.Dialer)
 	vf := &VPNFacade{
@@ -474,30 +478,86 @@ func (a *App) RebindUnderlay(why string) {
 	if !ok || magicConn == nil {
 		return
 	}
-	// Avoid magicConn.Rebind() here: the public method also probes and may close
-	// DERP. The observed iOS failure is a dead WireGuard ReceiveFunc; do not use
-	// wgdev.BindUpdate here because that closes magicsock's UDP pconn wrappers.
-	// Refresh the sockets, reconnect DERP, then reattach fresh receive routines.
-	log.Printf("magicsock: iOS underlay socket rebind + DERP reconnect + receive restart + endpoint reset + ReSTUN requested: %s", why)
-	const keepCurrentPort = 0
-	if err := rebindMagicsockSockets(magicConn, keepCurrentPort); err != nil {
-		log.Printf("magicsock: iOS underlay socket rebind failed: %v", err)
-	}
-	if err := magicConn.DebugBreakDERPConns(); err != nil {
-		log.Printf("magicsock: iOS DERP reconnect failed: %v", err)
-	}
-	if err := restartWireGuardReceiveFuncs(b.engine, magicConn); err != nil {
-		log.Printf("magicsock: iOS receive restart failed: %v", err)
-	} else {
-		log.Printf("magicsock: iOS receive restart launched")
-	}
+	log.Printf("magicsock: iOS soft underlay refresh requested: %s", why)
 	resetMagicsockEndpointStates(magicConn)
-	magicConn.ReSTUN("ios-underlay-" + why)
-	if n, err := forceWireGuardPeerKeepalive(b.engine); err != nil {
-		log.Printf("magicsock: iOS peer keepalive kick failed: %v", err)
-	} else {
-		log.Printf("magicsock: iOS peer keepalive kick sent to %d peer(s)", n)
+	magicConn.ReSTUN("ios-soft-underlay-" + why)
+
+	peer, ok := b.selectedExitNodePeer()
+	if !ok {
+		log.Printf("magicsock: iOS soft underlay refresh found no selected exit-node peer")
+		return
 	}
+	go func(peer tailcfg.NodeView) {
+		res := &ipnstate.PingResult{}
+		magicConn.Ping(peer, res, 0, func(res *ipnstate.PingResult) {
+			if res.Err != "" {
+				log.Printf("magicsock: iOS exit-node disco ping failed node=%s ip=%s err=%s", res.NodeName, res.NodeIP, res.Err)
+				return
+			}
+			path := res.Endpoint
+			if path == "" {
+				path = res.PeerRelay
+			}
+			if path == "" && res.DERPRegionID != 0 {
+				path = fmt.Sprintf("derp-%d", res.DERPRegionID)
+			}
+			if path == "" {
+				path = "unknown-path"
+			}
+			log.Printf("magicsock: iOS exit-node disco ping ok node=%s ip=%s path=%s latency=%.3fs", res.NodeName, res.NodeIP, path, res.LatencySeconds)
+		})
+	}(peer)
+}
+
+func (b *backend) selectedExitNodePeer() (tailcfg.NodeView, bool) {
+	var zero tailcfg.NodeView
+	if b == nil || b.backend == nil {
+		return zero, false
+	}
+	nm := b.backend.NetMapWithPeers()
+	if nm == nil {
+		return zero, false
+	}
+	prefs := b.backend.Prefs()
+	exitNodeID := prefs.ExitNodeID()
+	if !exitNodeID.IsZero() {
+		for _, peer := range nm.Peers {
+			if peer.StableID() == exitNodeID {
+				return peer, true
+			}
+		}
+	}
+	exitNodeIP := prefs.ExitNodeIP()
+	if exitNodeIP.IsValid() {
+		for _, peer := range nm.Peers {
+			addresses := peer.Addresses()
+			for i := 0; i < addresses.Len(); i++ {
+				if addresses.At(i).Addr() == exitNodeIP {
+					return peer, true
+				}
+			}
+		}
+	}
+	for _, peer := range nm.Peers {
+		if nodeAdvertisesDefaultRoute(peer) {
+			return peer, true
+		}
+	}
+	return zero, false
+}
+
+func nodeAdvertisesDefaultRoute(peer tailcfg.NodeView) bool {
+	return prefixesIncludeDefaultRoute(peer.PrimaryRoutes()) || prefixesIncludeDefaultRoute(peer.AllowedIPs())
+}
+
+func prefixesIncludeDefaultRoute(prefixes views.Slice[netip.Prefix]) bool {
+	for i := 0; i < prefixes.Len(); i++ {
+		pfx := prefixes.At(i).Masked()
+		if pfx.Bits() == 0 && pfx.Addr().IsUnspecified() {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) Stop() {

@@ -11,6 +11,7 @@ struct TailnetLockView: View {
     @State private var showingSignURL: Bool = false
     @State private var signURL: String = ""
     @State private var isSigning: Bool = false
+    @State private var lastSignedDevice: String?
     
     var body: some View {
         List {
@@ -114,6 +115,11 @@ struct TailnetLockView: View {
                     // Signing operations (if this device can sign)
                     if status.isSigningKey {
                         Section {
+                            if let lastSignedDevice {
+                                Label("Signed \(lastSignedDevice)", systemImage: "checkmark.seal.fill")
+                                    .foregroundColor(.green)
+                            }
+
                             Button {
                                 showingQRScanner = true
                             } label: {
@@ -232,14 +238,18 @@ struct TailnetLockView: View {
         guard let vpn = appState.vpnManager else { return }
         
         isSigning = true
+        lastSignedDevice = nil
         
         Task {
             do {
-                try await LocalAPIClient.vpn(vpn).tkaSign(url: url)
+                let result = try await LocalAPIClient.vpn(vpn).tkaSign(url: url)
                 
                 await MainActor.run {
+                    lastSignedDevice = result.DeviceName ?? result.NodeKey ?? "node"
                     isSigning = false
+                    error = nil
                 }
+                await loadLockStatus()
             } catch {
                 await MainActor.run {
                     isSigning = false

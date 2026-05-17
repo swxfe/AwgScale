@@ -178,6 +178,12 @@ struct LocalAPIClient {
         return try resp.bodyData(endpoint: endpoint)
     }
 
+    func status(timeout: Int = 30000) async throws -> StatusResponse {
+        let endpoint = "/localapi/v0/status"
+        let resp = try await execute("GET", endpoint, nil, timeout, true)
+        return try resp.decodedBody(StatusResponse.self, endpoint: endpoint)
+    }
+
     func statusObject(timeout: Int = 30000) async throws -> [String: Any] {
         let data = try await statusJSON(timeout: timeout)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -291,11 +297,34 @@ struct LocalAPIClient {
         return .status(status)
     }
 
-    func tkaSign(url: String) async throws {
+    func tkaVerifyDeeplink(url: String) async throws -> TKADeeplinkValidationResponse {
+        let endpoint = "/localapi/v0/tka/verify-deeplink"
+        let body = try JSONEncoder().encode(["URL": url])
+        let resp = try await execute("POST", endpoint, body, 30000, true)
+        return try resp.decodedBody(TKADeeplinkValidationResponse.self, endpoint: endpoint)
+    }
+
+    func tkaSign(nodeKey: String, rotationPublic: String?) async throws {
         let endpoint = "/localapi/v0/tka/sign"
-        let body = try JSONEncoder().encode(["url": url])
+        let request = TKASignRequest(
+            NodeKey: nodeKey,
+            RotationPublic: rotationPublic.flatMap { $0.isEmpty ? nil : Data($0.utf8) }
+        )
+        let body = try JSONEncoder().encode(request)
         let resp = try await execute("POST", endpoint, body, 30000, true)
         try resp.requireSuccess(endpoint: endpoint)
+    }
+
+    func tkaSign(url: String) async throws -> TKADeeplinkValidationResponse {
+        let validation = try await tkaVerifyDeeplink(url: url)
+        guard validation.IsValid == true else {
+            throw LocalAPIError.backend(validation.Error ?? "Invalid Tailnet Lock signing link")
+        }
+        guard let nodeKey = validation.NodeKey, !nodeKey.isEmpty else {
+            throw LocalAPIError.backend("Tailnet Lock signing link did not include a node key")
+        }
+        try await tkaSign(nodeKey: nodeKey, rotationPublic: validation.TLPub)
+        return validation
     }
 }
 
@@ -311,6 +340,33 @@ struct PingAPIResponse: Decodable {
     let LatencySeconds: Double?
 }
 
+/// Response from `GET /localapi/v0/status`.
+struct StatusResponse: Codable {
+    let BackendState: String?
+    let Peer: [String: PeerStatus]?
+
+    struct PeerStatus: Codable {
+        let HostName: String?
+        let DNSName: String?
+        let TailscaleIPs: [String]?
+        let PrimaryRoutes: [String]?
+        let AllowedIPs: [String]?
+        let Online: Bool?
+        let Active: Bool?
+        let ExitNode: Bool?
+        let ExitNodeOption: Bool?
+        let OS: String?
+
+        var displayName: String {
+            if let hostName = HostName, !hostName.isEmpty { return hostName }
+            if let dnsName = DNSName, !dnsName.isEmpty {
+                return dnsName.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            }
+            return "Unknown"
+        }
+    }
+}
+
 /// Response from `GET /localapi/v0/dns-config`.
 struct DNSConfigResponse: Codable {
     let Resolvers: [ResolverEntry]?
@@ -319,9 +375,24 @@ struct DNSConfigResponse: Codable {
     let Domains: [String]?
     let Proxied: Bool?
     let Nameservers: [String]?
+    let CertDomains: [String]?
+    let ExtraRecords: [DNSRecord]?
+    let ExitNodeFilteredSet: [String]?
 
     struct ResolverEntry: Codable {
         let Addr: String?
+    }
+
+    struct DNSRecord: Codable {
+        let Name: String?
+        let recordType: String?
+        let Value: String?
+
+        enum CodingKeys: String, CodingKey {
+            case Name
+            case recordType = "Type"
+            case Value
+        }
     }
 }
 
@@ -334,6 +405,23 @@ struct TKAStatusResponse: Codable {
     let NodeKeySigned: Bool?
     let IsSigningKey: Bool?
     let TrustedKeys: [String]?
+}
+
+/// Response from `POST /localapi/v0/tka/verify-deeplink`.
+struct TKADeeplinkValidationResponse: Codable {
+    let IsValid: Bool?
+    let Error: String?
+    let Version: UInt8?
+    let NodeKey: String?
+    let TLPub: String?
+    let DeviceName: String?
+    let OSName: String?
+    let EmailAddress: String?
+}
+
+private struct TKASignRequest: Codable {
+    let NodeKey: String
+    let RotationPublic: Data?
 }
 
 /// Response from `GET /localapi/v0/files`.

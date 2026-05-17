@@ -134,6 +134,54 @@ struct DNSSettingsView: View {
                         Text("These domains are appended when resolving short hostnames.")
                     }
                 }
+
+                if !config.certDomains.isEmpty {
+                    Section {
+                        ForEach(config.certDomains, id: \.self) { domain in
+                            DNSInfoRow(label: "Certificate", value: domain, copyable: true)
+                        }
+                    } header: {
+                        Text("Certificate Domains")
+                    } footer: {
+                        Text("The control plane can assist DNS-01 certificate challenges for these names.")
+                    }
+                }
+
+                if !config.extraRecords.isEmpty {
+                    Section {
+                        ForEach(config.extraRecords) { record in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(record.name)
+                                HStack(spacing: 8) {
+                                    Text(record.type)
+                                        .font(.caption2)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.secondary.opacity(0.15))
+                                        .cornerRadius(4)
+                                    Text(record.value)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    } header: {
+                        Text("Extra DNS Records")
+                    }
+                }
+
+                if !config.exitNodeFilteredSuffixes.isEmpty {
+                    Section {
+                        ForEach(config.exitNodeFilteredSuffixes, id: \.self) { suffix in
+                            DNSInfoRow(label: "Filtered", value: suffix, copyable: true)
+                        }
+                    } header: {
+                        Text("Exit Node DNS Filters")
+                    } footer: {
+                        Text("An exit node DNS proxy should not answer these suffixes.")
+                    }
+                }
                 
                 // Managed DNS toggle info
                 Section {
@@ -260,6 +308,9 @@ struct DNSConfig {
     let fallbackResolvers: [String]
     let routes: [String: [String]]
     let searchDomains: [String]
+    let certDomains: [String]
+    let extraRecords: [DNSRecordDisplay]
+    let exitNodeFilteredSuffixes: [String]
     let magicDNSEnabled: Bool
     let magicDNSSuffix: String?
     let hasManagedDNS: Bool
@@ -282,9 +333,28 @@ struct DNSConfig {
         self.routes = routesMap
         
         self.searchDomains = response.Domains ?? []
+        self.certDomains = response.CertDomains ?? []
+        self.extraRecords = (response.ExtraRecords ?? []).compactMap(DNSRecordDisplay.init)
+        self.exitNodeFilteredSuffixes = response.ExitNodeFilteredSet ?? []
         self.magicDNSEnabled = response.Proxied ?? false
         self.magicDNSSuffix = response.Domains?.first
-        self.hasManagedDNS = magicDNSEnabled || !self.resolvers.isEmpty || !routesMap.isEmpty || !fallbackResolvers.isEmpty || !searchDomains.isEmpty
+        self.hasManagedDNS = magicDNSEnabled || !self.resolvers.isEmpty || !routesMap.isEmpty || !fallbackResolvers.isEmpty || !searchDomains.isEmpty || !certDomains.isEmpty || !extraRecords.isEmpty
+    }
+}
+
+struct DNSRecordDisplay: Identifiable {
+    let id: String
+    let name: String
+    let type: String
+    let value: String
+
+    init?(_ response: DNSConfigResponse.DNSRecord) {
+        guard let name = response.Name, !name.isEmpty,
+              let value = response.Value, !value.isEmpty else { return nil }
+        self.name = name
+          self.type = response.recordType?.isEmpty == false ? response.recordType! : "A/AAAA"
+        self.value = value
+        self.id = "\(name)|\(type)|\(value)"
     }
 }
 

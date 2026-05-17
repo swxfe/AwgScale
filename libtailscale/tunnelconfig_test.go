@@ -287,8 +287,11 @@ func TestTunnelConfigPreservesCustomHeadscaleRoutes(t *testing.T) {
 	}
 }
 
-func TestTunnelConfigExitNodeUsesPublicDNSForTailscaleServiceDNS(t *testing.T) {
+func TestTunnelConfigExitNodeUsesPlatformDNSForTailscaleServiceDNS(t *testing.T) {
 	mgr := &tunnelConfigManager{}
+	mgr.setExitNodeDNSServers(func() []netip.Addr {
+		return []netip.Addr{netip.MustParseAddr("192.0.2.53"), netip.MustParseAddr("2001:db8::53")}
+	})
 	cb := &recordingCallback{}
 	mgr.setCallback(cb)
 
@@ -320,6 +323,43 @@ func TestTunnelConfigExitNodeUsesPublicDNSForTailscaleServiceDNS(t *testing.T) {
 		if !containsString(tc.Routes, want) {
 			t.Fatalf("Routes = %v, missing core tunnel route %s", tc.Routes, want)
 		}
+	}
+	wantDNS := []string{"192.0.2.53", "2001:db8::53"}
+	if len(tc.DNSServers) != len(wantDNS) {
+		t.Fatalf("DNSServers = %v, want %v", tc.DNSServers, wantDNS)
+	}
+	for i, want := range wantDNS {
+		if tc.DNSServers[i] != want {
+			t.Fatalf("DNSServers = %v, want %v", tc.DNSServers, wantDNS)
+		}
+	}
+}
+
+func TestTunnelConfigExitNodeUsesPublicDNSWhenPlatformDNSUnavailable(t *testing.T) {
+	mgr := &tunnelConfigManager{}
+	cb := &recordingCallback{}
+	mgr.setCallback(cb)
+
+	rc := sampleRouterConfig()
+	rc.Routes = []netip.Prefix{
+		netip.MustParsePrefix("0.0.0.0/0"),
+		netip.MustParsePrefix("::/0"),
+	}
+	dcfg := &dns.OSConfig{
+		Nameservers: []netip.Addr{
+			netip.MustParseAddr("100.100.100.100"),
+			netip.MustParseAddr("fd7a:115c:a1e0::53"),
+		},
+	}
+
+	if err := mgr.onConfigUpdate(rc, dcfg); err != nil {
+		t.Fatalf("onConfigUpdate: %v", err)
+	}
+
+	configs := cb.snapshot()
+	var tc TunnelConfig
+	if err := json.Unmarshal(configs[0], &tc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
 	wantDNS := []string{"8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844"}
 	if len(tc.DNSServers) != len(wantDNS) {
