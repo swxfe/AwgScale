@@ -18,7 +18,7 @@ struct SettingsView: View {
     }
 
     private var modeSwitchDisabled: Bool {
-        appState.pendingWantRunning != nil || vpnManager.isTunnelActive || (!appState.usesVPNPermission && appState.appNetworkIsActive)
+        appState.pendingWantRunning != nil || appState.isSwitchingNetworkMode
     }
 
     var body: some View {
@@ -49,13 +49,19 @@ struct SettingsView: View {
                       get: { appState.usesVPNPermission },
                       set: { appState.setUsesVPNPermission($0) }
                   )) {
-                      SettingsRowLabel(title: "Enable VPN Permission", systemImage: "shield.lefthalf.filled")
+                      HStack {
+                          SettingsRowLabel(title: "Enable VPN Permission", systemImage: "shield.lefthalf.filled")
+                          if appState.isSwitchingNetworkMode {
+                              Spacer()
+                              ProgressView()
+                          }
+                      }
                   }
                   .disabled(modeSwitchDisabled)
               } header: {
                   Text("Connection Mode")
               } footer: {
-                  Text(appState.usesVPNPermission ? "System-wide VPN mode keeps the original behavior." : "App-only mode keeps tailnet traffic inside AwgScale.")
+                  Text(appState.usesVPNPermission ? "System-wide VPN mode keeps the original behavior. Switching modes resets the current app/VPN network session but keeps the login." : "App-only mode keeps tailnet traffic inside AwgScale. Switching modes resets the current app/VPN network session but keeps the login.")
               }
 
             Section("Network") {

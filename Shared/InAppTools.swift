@@ -1,10 +1,5 @@
 import Foundation
 
-struct InAppBrowserRequest: Encodable {
-    let url: String
-    let timeoutMillis: Int
-}
-
 struct InAppBrowserPage: Decodable {
     let url: String
     let statusCode: Int

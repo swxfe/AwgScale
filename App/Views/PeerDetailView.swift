@@ -169,7 +169,11 @@ struct PeerDetailView: View {
             if !peer.isCurrentDevice && !peer.sshTargetHost.isEmpty {
                 Section {
                     NavigationLink {
-                        TailnetTerminalView(initialHost: peer.sshTargetHost, sshHint: peer.sshCapabilityLabel)
+                        TailnetTerminalView(
+                            initialHost: peer.primaryIPv4Address ?? peer.sshTargetHost,
+                            sshHint: peer.sshCapabilityLabel,
+                            autoConnectInitialHost: true
+                        )
                     } label: {
                         HStack {
                             Image(systemName: "terminal")

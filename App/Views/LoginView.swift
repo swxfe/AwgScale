@@ -28,8 +28,14 @@ struct LoginView: View {
                     get: { appState.usesVPNPermission },
                     set: { appState.setUsesVPNPermission($0) }
                 )) {
-                    Text("Enable VPN Permission")
-                        .font(.headline)
+                    HStack {
+                        Text("Enable VPN Permission")
+                            .font(.headline)
+                        if appState.isSwitchingNetworkMode {
+                            Spacer()
+                            ProgressView()
+                        }
+                    }
                 }
 
                 Text(appState.usesVPNPermission ? "System-wide mode lets every app use the tailnet." : "App-only mode keeps tailnet access inside AwgScale.")
@@ -40,7 +46,7 @@ struct LoginView: View {
             .background(Color.secondary.opacity(0.10))
             .cornerRadius(12)
             .padding(.horizontal, 32)
-            .disabled(appState.isLoggingIn)
+            .disabled(appState.isLoggingIn || appState.isSwitchingNetworkMode)
 
             Button(action: {
                 appState.startLogin()

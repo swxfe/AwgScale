@@ -17,12 +17,15 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/net/dns/dnsmessage"
 	"tailscale.com/net/socks5"
+	"tailscale.com/net/tsaddr"
 )
 
 const (
 	inAppHTTPMaxBodyBytes = 2 << 20
 	inAppTCPMaxBodyBytes  = 64 << 10
+	inAppTCPDialTimeout   = 15 * time.Second
 )
 
 type inAppHTTPFetchRequest struct {
@@ -302,6 +305,11 @@ func (a *App) dialInAppTailnetTCP(ctx context.Context, b *backend, network, addr
 	if b == nil || b.netstack == nil || b.backend == nil {
 		return nil, errors.New("tailnet backend is not ready")
 	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, inAppTCPDialTimeout)
+		defer cancel()
+	}
 
 	host, portString, err := net.SplitHostPort(address)
 	if err != nil {
@@ -311,10 +319,50 @@ func (a *App) dialInAppTailnetTCP(ctx context.Context, b *backend, network, addr
 	if err != nil {
 		return nil, err
 	}
-	addrs, err := resolveInAppAddrs(ctx, b, host)
-	if err != nil {
-		return nil, err
+
+	host = normalizeTailnetName(host)
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if inAppAddrRoutableWithoutExitNode(b, addr) || inAppExitNodeActive(b) {
+			return dialInAppNetstackTCP(ctx, b, []netip.Addr{addr}, uint16(port))
+		}
+		if inAppAddrShouldStayInTailnet(addr) {
+			return nil, errors.New("tailnet route is not ready")
+		}
+		return dialInAppDirectTCP(ctx, network, address)
 	}
+
+	if addrs, ok := resolveInAppTailnetPeerAddrs(b, host); ok {
+		return dialInAppNetstackTCP(ctx, b, addrs, uint16(port))
+	}
+
+	if addrs, ok := resolveInAppTailnetDNSAddrs(b, host); ok {
+		return dialInAppNetstackTCP(ctx, b, addrs, uint16(port))
+	}
+
+	if inAppExitNodeActive(b) {
+		ipAddrs, err := lookupPublicIPAddrsViaExitNode(ctx, b, host)
+		if err != nil {
+			return nil, err
+		}
+		var addrs []netip.Addr
+		for _, ipAddr := range ipAddrs {
+			if addr, ok := netip.AddrFromSlice(ipAddr.IP); ok {
+				addrs = append(addrs, addr.Unmap())
+			}
+		}
+		if len(addrs) == 0 {
+			return nil, fmt.Errorf("%q did not resolve to an IP address", host)
+		}
+		return dialInAppNetstackTCP(ctx, b, preferIPv4(addrs), uint16(port))
+	}
+
+	if inAppHostnameShouldStayInTailnet(b, host) {
+		return nil, fmt.Errorf("%q is not a known tailnet host or IP", host)
+	}
+	return dialInAppDirectTCP(ctx, network, address)
+}
+
+func dialInAppNetstackTCP(ctx context.Context, b *backend, addrs []netip.Addr, port uint16) (net.Conn, error) {
 	if len(addrs) == 0 {
 		return nil, errors.New("host did not resolve to an IP address")
 	}
@@ -324,11 +372,14 @@ func (a *App) dialInAppTailnetTCP(ctx context.Context, b *backend, network, addr
 		if !inAppAddrRoutableWithoutExitNode(b, addr) {
 			if inAppExitNodeActive(b) {
 				lastErr = errors.New("exit node route is not ready")
-				continue
+			} else {
+				lastErr = errors.New("tailnet route is not ready")
 			}
-			return nil, errors.New("select an exit node to reach non-tailnet addresses")
+			continue
 		}
-		conn, err := b.netstack.DialContextTCP(ctx, netip.AddrPortFrom(addr, uint16(port)))
+		dialCtx, cancel := context.WithTimeout(ctx, inAppTCPDialTimeout)
+		conn, err := b.netstack.DialContextTCP(dialCtx, netip.AddrPortFrom(addr, port))
+		cancel()
 		if err == nil {
 			return conn, nil
 		}
@@ -339,6 +390,11 @@ func (a *App) dialInAppTailnetTCP(ctx context.Context, b *backend, network, addr
 		return nil, lastErr
 	}
 	return nil, errors.New("no routable address found")
+}
+
+func dialInAppDirectTCP(ctx context.Context, network, address string) (net.Conn, error) {
+	d := net.Dialer{Timeout: inAppTCPDialTimeout}
+	return d.DialContext(ctx, network, address)
 }
 
 func resolveInAppAddr(ctx context.Context, b *backend, host string) (netip.Addr, error) {
@@ -358,31 +414,18 @@ func resolveInAppAddrs(ctx context.Context, b *backend, host string) ([]netip.Ad
 		if inAppAddrRoutableWithoutExitNode(b, addr) || inAppExitNodeActive(b) {
 			return []netip.Addr{addr}, nil
 		}
+		if inAppAddrShouldStayInTailnet(addr) {
+			return nil, errors.New("tailnet route is not ready")
+		}
 		return nil, errors.New("select an exit node to reach non-tailnet addresses")
 	}
 
-	status := b.backend.Status()
-	candidates := make(map[string]netip.Addr)
-	addPeer := func(hostName, dnsName string, ips []netip.Addr) {
-		if len(ips) == 0 {
-			return
-		}
-		ip := ips[0]
-		for _, name := range candidateTailnetNames(hostName, dnsName, status.MagicDNSSuffix) {
-			candidates[name] = ip
-		}
-	}
-	if status.Self != nil {
-		addPeer(status.Self.HostName, status.Self.DNSName, status.Self.TailscaleIPs)
-	}
-	for _, peer := range status.Peer {
-		if peer != nil {
-			addPeer(peer.HostName, peer.DNSName, peer.TailscaleIPs)
-		}
+	if addrs, ok := resolveInAppTailnetPeerAddrs(b, host); ok {
+		return addrs, nil
 	}
 
-	if addr, ok := candidates[host]; ok {
-		return []netip.Addr{addr}, nil
+	if addrs, ok := resolveInAppTailnetDNSAddrs(b, host); ok {
+		return addrs, nil
 	}
 
 	if inAppExitNodeActive(b) {
@@ -403,6 +446,106 @@ func resolveInAppAddrs(ctx context.Context, b *backend, host string) ([]netip.Ad
 	}
 
 	return nil, fmt.Errorf("%q is not a known tailnet host or IP", host)
+}
+
+func resolveInAppTailnetDNSAddrs(b *backend, host string) ([]netip.Addr, bool) {
+	if b == nil || b.backend == nil {
+		return nil, false
+	}
+
+	var addrs []netip.Addr
+	for _, qtype := range []dnsmessage.Type{dnsmessage.TypeA, dnsmessage.TypeAAAA} {
+		res, _, err := b.backend.QueryDNS(host, qtype)
+		if err != nil {
+			continue
+		}
+		addrs = appendDNSResponseAddrs(addrs, res)
+	}
+
+	addrs = routableInAppAddrs(b, preferIPv4(addrs))
+	return addrs, len(addrs) > 0
+}
+
+func appendDNSResponseAddrs(addrs []netip.Addr, response []byte) []netip.Addr {
+	var parser dnsmessage.Parser
+	if _, err := parser.Start(response); err != nil {
+		return addrs
+	}
+	if err := parser.SkipAllQuestions(); err != nil {
+		return addrs
+	}
+	for {
+		header, err := parser.AnswerHeader()
+		if err == dnsmessage.ErrSectionDone {
+			return addrs
+		}
+		if err != nil {
+			return addrs
+		}
+		switch header.Type {
+		case dnsmessage.TypeA:
+			answer, err := parser.AResource()
+			if err != nil {
+				return addrs
+			}
+			addrs = append(addrs, netip.AddrFrom4(answer.A))
+		case dnsmessage.TypeAAAA:
+			answer, err := parser.AAAAResource()
+			if err != nil {
+				return addrs
+			}
+			addrs = append(addrs, netip.AddrFrom16(answer.AAAA))
+		default:
+			if err := parser.SkipAnswer(); err != nil {
+				return addrs
+			}
+		}
+	}
+}
+
+func routableInAppAddrs(b *backend, addrs []netip.Addr) []netip.Addr {
+	out := make([]netip.Addr, 0, len(addrs))
+	seen := make(map[netip.Addr]bool, len(addrs))
+	for _, addr := range addrs {
+		addr = addr.Unmap()
+		if seen[addr] || !inAppAddrRoutableWithoutExitNode(b, addr) {
+			continue
+		}
+		seen[addr] = true
+		out = append(out, addr)
+	}
+	return out
+}
+
+func resolveInAppTailnetPeerAddrs(b *backend, host string) ([]netip.Addr, bool) {
+	if b == nil || b.backend == nil {
+		return nil, false
+	}
+	status := b.backend.Status()
+	if status == nil {
+		return nil, false
+	}
+
+	candidates := make(map[string][]netip.Addr)
+	addPeer := func(hostName, dnsName string, ips []netip.Addr) {
+		if len(ips) == 0 {
+			return
+		}
+		for _, name := range candidateTailnetNames(hostName, dnsName, status.MagicDNSSuffix) {
+			candidates[name] = preferIPv4(ips)
+		}
+	}
+	if status.Self != nil {
+		addPeer(status.Self.HostName, status.Self.DNSName, status.Self.TailscaleIPs)
+	}
+	for _, peer := range status.Peer {
+		if peer != nil {
+			addPeer(peer.HostName, peer.DNSName, peer.TailscaleIPs)
+		}
+	}
+
+	addrs, ok := candidates[normalizeTailnetName(host)]
+	return addrs, ok
 }
 
 func lookupPublicIPAddrsViaExitNode(ctx context.Context, b *backend, host string) ([]net.IPAddr, error) {
@@ -454,8 +597,41 @@ func inAppAddrRoutableWithoutExitNode(b *backend, addr netip.Addr) bool {
 	if b == nil || b.engine == nil {
 		return false
 	}
+	addr = addr.Unmap()
+	if tsaddr.IsTailscaleIP(addr) {
+		return true
+	}
 	_, ok := b.engine.PeerForIP(addr)
 	return ok
+}
+
+func inAppAddrShouldStayInTailnet(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	return tsaddr.IsTailscaleIP(addr) ||
+		addr.IsPrivate() ||
+		addr.IsLoopback() ||
+		addr.IsLinkLocalUnicast() ||
+		addr.IsMulticast() ||
+		addr.IsUnspecified()
+}
+
+func inAppHostnameShouldStayInTailnet(b *backend, host string) bool {
+	host = normalizeTailnetName(host)
+	if host == "" {
+		return false
+	}
+	if !strings.Contains(host, ".") {
+		return true
+	}
+	if b != nil && b.backend != nil {
+		if status := b.backend.Status(); status != nil {
+			suffix := normalizeTailnetName(status.MagicDNSSuffix)
+			if suffix != "" && (host == suffix || strings.HasSuffix(host, "."+suffix)) {
+				return true
+			}
+		}
+	}
+	return strings.HasSuffix(host, ".ts.net") || strings.HasSuffix(host, ".beta.tailscale.net")
 }
 
 func inAppExitNodeActive(b *backend) bool {
@@ -463,8 +639,8 @@ func inAppExitNodeActive(b *backend) bool {
 		return false
 	}
 	prefs := b.backend.Prefs()
-	if prefs.Valid() && (!prefs.ExitNodeID().IsZero() || prefs.ExitNodeIP().IsValid()) {
-		return true
+	if prefs.Valid() {
+		return prefs.RouteAll() && (!prefs.ExitNodeID().IsZero() || prefs.ExitNodeIP().IsValid())
 	}
 	status := b.backend.Status()
 	return status != nil && status.ExitNodeStatus != nil
