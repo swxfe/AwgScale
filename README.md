@@ -1,77 +1,86 @@
 # AwgScale
 
-**AwgScale is an open source Tailscale-compatible iOS client with Amnezia-WG / AWG support.**
+**An open source Tailscale-compatible iOS client with Amnezia-WG / AWG support.**
 
-AwgScale provides a system-wide Packet Tunnel VPN when the app is signed with the required Network Extension entitlement. It also includes app-only tailnet tools that keep useful private-network workflows inside the app when a full-device VPN tunnel is not desired or not available.
+AwgScale is independent software — not affiliated with, sponsored by, or approved by Tailscale Inc.
 
-AwgScale is independent software. It is not affiliated with, sponsored by, endorsed by, or approved by Tailscale Inc.
+---
 
-## Features
+## Which install method are you using?
 
-- Tailscale-compatible login, profiles, custom control server URLs, and machine authorization.
-- System-wide iOS Packet Tunnel VPN with exit nodes, DNS controls, subnet routes, Tailnet Lock, health status, and diagnostics.
-- App-only built-in apps for tailnet workflows:
-  - Browser tabs, history, bookmarks, compact mobile chrome, tailnet HTTP access, and optional exit-node routing for public browsing.
-  - SSH terminal with saved hosts, password or private-key authentication, a phone keyboard path, and a compact preset terminal keyboard.
-- Amnezia-WG configuration status, manual parameter editing, JSON paste/copy, and peer-to-device AWG config sync.
-- Taildrop receive and send flows, including the Share Extension.
-- Peer details, SSH entry from peers, ping diagnostics, notification settings, MDM policy display, and bug report export.
+The Network Extension entitlement controls whether AwgScale can create a system-wide VPN tunnel.
 
-## Connection Modes
+### TrollStore — full features, no Apple account needed
 
-### System-wide VPN
+TrollStore installs the app persistently with all entitlements intact. No Apple Developer account is required, and no re-signing is ever needed.
 
-VPN Permission enables the full Packet Tunnel extension and system-wide tailnet routing. This requires Apple signing with the Network Extension entitlement, such as a TrollStore build or an appropriately provisioned signed binary.
+**All features available:**
+- System-wide Packet Tunnel VPN — exit nodes, DNS, subnet routes, Tailnet Lock
+- Built-in SSH terminal and browser (tailnet + public via exit node)
+- Taildrop, AWG config sync, peer diagnostics
 
-### App-only tools
+### Paid Apple Developer account (Sideloadly, Xcode, etc.)
 
-Without VPN Permission, AwgScale keeps tailnet access inside the app only. You still get the built-in terminal and, on iOS 17 or later, the internal browser with tailnet/http access and optional exit-node routing for public browsing.
+A paid Apple Developer Program account ($99/year) can request the Network Extension capability for an App ID in the Developer Portal. Signing with that provisioning profile — via Sideloadly, Xcode, or any other tool — produces a fully functional build with system-wide VPN. The certificate is valid for one year.
 
-External apps cannot use the tailscale network or a peer exit node when VPN Permission is disabled.
+**All features available** (same as TrollStore), with annual re-signing required.
+
+> In Sideloadly: choose your paid team, import the provisioning profile that includes the Network Extension capability, then sign.
+
+### Free Apple ID signing (Sideloadly default, AltStore personal team, etc.)
+
+Free accounts cannot request the Network Extension entitlement. The app runs in **app-only mode**: tailnet access works inside the app only, no system-wide VPN is created, and certificates expire after 7 days.
+
+**Available in app-only mode:**
+- Built-in SSH terminal (connects to tailnet hosts directly)
+- Built-in browser with tailnet HTTP access and exit-node public browsing (iOS 17+)
+**Not available without Network Extension:**
+- System-wide VPN tunnel, exit node routing for other apps
+
+---
 
 ## Build
 
-Build the Go framework:
-
 ```sh
+# Build the Go framework
 ./build_go.sh --all
-```
 
-Build a TrollStore-ready IPA:
-
-```sh
+# Build a TrollStore-ready unsigned IPA
 ./build_unsigned_ipa.sh
+# Output: build/unsigned-ipa/AwgScale-trollstore.ipa
 ```
-
-The IPA is written to `build/unsigned-ipa/AwgScale-trollstore.ipa`.
 
 Quick validation:
 
 ```sh
 go test ./libtailscale/...
-xcodebuild build -project AwgScale.xcodeproj -scheme AwgScale -configuration Debug -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO
+xcodebuild build -project AwgScale.xcodeproj -scheme AwgScale \
+  -configuration Debug -destination 'generic/platform=iOS' \
+  CODE_SIGNING_ALLOWED=NO
 ```
 
-For local Xcode runs, use a signing configuration that matches the features being exercised. App-only screens can be developed in the simulator; the system VPN tunnel still depends on Network Extension support from the running environment.
+App-only UI can be developed in the Simulator. The system VPN tunnel requires a device with a valid Network Extension entitlement.
+
+---
 
 ## Open Source Projects
 
-AwgScale is built on open source projects and keeps those acknowledgements visible in the app under **Settings > About AwgScale > Open Source Projects**.
+Acknowledgements are also visible in the app under **Settings → About AwgScale → Open Source Projects**.
 
-### Libraries and upstreams
-
-| Project | Use in AwgScale |
+| Project | Role |
 | --- | --- |
-| [Tailscale](https://github.com/tailscale/tailscale) | Tailnet runtime, LocalAPI behavior, networking stack, Taildrop, and the main Go client foundation. The `tailscale.com` module is resolved to the AWG fork at [LiuTangLei/tailscale](https://github.com/LiuTangLei/tailscale). |
-| [wireguard-go](https://git.zx2c4.com/wireguard-go/) | WireGuard userspace foundation used through the AWG fork at [LiuTangLei/wireguard-go](https://github.com/LiuTangLei/wireguard-go). |
-| [Amnezia-WG](https://github.com/amnezia-vpn/amneziawg-go) | AWG protocol ideas and configuration model exposed by the forked networking stack. |
-| [golang.org/x/crypto/ssh](https://pkg.go.dev/golang.org/x/crypto/ssh) | SSH client implementation for the built-in terminal. |
-| [Go](https://go.dev/) | Go toolchain used to build the embedded networking runtime. |
-| [gomobile](https://pkg.go.dev/golang.org/x/mobile) | Go-to-iOS binding toolchain used for `Libtailscale.xcframework`. |
+| [Tailscale](https://github.com/tailscale/tailscale) | Tailnet runtime, LocalAPI, networking stack, Taildrop. Module resolved to the AWG fork at [LiuTangLei/tailscale](https://github.com/LiuTangLei/tailscale). |
+| [wireguard-go](https://git.zx2c4.com/wireguard-go/) | WireGuard userspace, via the AWG fork at [LiuTangLei/wireguard-go](https://github.com/LiuTangLei/wireguard-go). |
+| [Amnezia-WG](https://github.com/amnezia-vpn/amneziawg-go) | AWG protocol and configuration model. |
+| [golang.org/x/crypto/ssh](https://pkg.go.dev/golang.org/x/crypto/ssh) | SSH client for the built-in terminal. |
+| [Go](https://go.dev/) | Toolchain for the embedded networking runtime. |
+| [gomobile](https://pkg.go.dev/golang.org/x/mobile) | Go-to-iOS binding for `Libtailscale.xcframework`. |
 | [XcodeGen](https://github.com/yonaskolb/XcodeGen) | Xcode project generation from `project.yml`. |
+
+---
 
 ## Legal
 
-AwgScale includes open source code from `tailscale.com` and related repositories under the BSD 3-Clause license and accompanying PATENTS grant. Keep [LICENSE](LICENSE) and [PATENTS](PATENTS) with source and binary redistributions, and preserve the licenses and notices required by each bundled open source project listed above.
+AwgScale includes code from `tailscale.com` and related repositories under the BSD 3-Clause license. Keep [LICENSE](LICENSE) and [PATENTS](PATENTS) with any source or binary redistribution, and preserve the upstream licenses listed above.
 
-WireGuard is a registered trademark of Jason A. Donenfeld. Amnezia-WG belongs to its respective upstream project. Other names may be trademarks of their owners.
+WireGuard is a registered trademark of Jason A. Donenfeld. Other names may be trademarks of their respective owners.

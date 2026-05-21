@@ -475,10 +475,6 @@ struct TailnetBrowserView: View {
     }
 
     private func requestCloseBrowser() {
-        guard activeTab.page != nil else {
-            dismiss()
-            return
-        }
         showingCloseConfirmation = true
     }
 
