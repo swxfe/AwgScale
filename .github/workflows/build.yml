@@ -1,0 +1,42 @@
+name: Build AwgScale IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-13
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install Dependencies
+        run: |
+          brew install xcodegen
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          export PATH=$PATH:$(go env GOPATH)/bin
+          gomobile init
+
+      - name: Build Go Framework
+        run: |
+          export PATH=$PATH:$(go env GOPATH)/bin
+          chmod +x ./build_go.sh
+          ./build_go.sh --all
+
+      - name: Build Unsigned IPA
+        run: |
+          chmod +x ./build_unsigned_ipa.sh
+          ./build_unsigned_ipa.sh
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AwgScale-Trollstore-IPA
+          path: build/unsigned-ipa/*.ipa
