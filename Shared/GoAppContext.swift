@@ -145,7 +145,13 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
 
             let status = SecItemAdd(addQuery as CFDictionary, nil)
             if status == errSecSuccess {
-                fallbackPreferences.set(value, forKey: key)
+                // The secret now lives in the shared Keychain group, which both
+                // the app and the network extension access directly. Do NOT mirror
+                // it into App Group UserDefaults (unencrypted on disk); purge any
+                // legacy plaintext copy. The UserDefaults fallback below is only
+                // used when the Keychain is unavailable (a build without the
+                // keychain-access-groups entitlement).
+                fallbackPreferences.removeObject(forKey: key)
                 return
             }
             if status == errSecMissingEntitlement {
@@ -181,8 +187,10 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
             let status = SecItemCopyMatching(query as CFDictionary, &result)
             if status == errSecSuccess, let data = result as? Data {
                 let value = String(data: data, encoding: .utf8) ?? ""
-                if fallbackPreferences.string(forKey: key) != value {
-                    fallbackPreferences.set(value, forKey: key)
+                // Keychain is the source of truth; purge any legacy plaintext
+                // mirror so secrets are not left unencrypted in App Group storage.
+                if fallbackPreferences.object(forKey: key) != nil {
+                    fallbackPreferences.removeObject(forKey: key)
                 }
                 return value
             }
@@ -652,7 +660,8 @@ class GoAppContext: NSObject, LibtailscaleAppContextProtocol {
                           userInfo: [NSLocalizedDescriptionKey: "Failed to load key reference"])
         }
         
-        // CFTypeRef -> SecKey (SecItemCopyMatching returns SecKey when kSecReturnRef is true)
+        // Xcode 27: compiler confirms `as? SecKey` always succeeds for CoreFoundation types,
+        // so use force cast which is safe and preserves runtime type checking.
         let privateKey = cfItem as! SecKey
         
         GoAppContext.setLoadedKey(keyID, key: privateKey)

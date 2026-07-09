@@ -13,6 +13,11 @@ struct LocalAPIClient {
 
     private let execute: Executor
     private let executeFile: FileExecutor?
+    private static let pathSegmentAllowed: CharacterSet = {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/?#")
+        return allowed
+    }()
 
     init(_ execute: @escaping Executor, fileExecutor: FileExecutor? = nil) {
         self.execute = execute
@@ -65,13 +70,13 @@ struct LocalAPIClient {
     }
 
     func switchProfile(id: String) async throws {
-        let endpoint = "/localapi/v0/profiles/\(id)"
+        let endpoint = "/localapi/v0/profiles/\(Self.escapedPathSegment(id))"
         let resp = try await execute("POST", endpoint, nil, 30000, true)
         try resp.requireSuccess(endpoint: endpoint)
     }
 
     func deleteProfile(id: String) async throws {
-        let endpoint = "/localapi/v0/profiles/\(id)"
+        let endpoint = "/localapi/v0/profiles/\(Self.escapedPathSegment(id))"
         let resp = try await execute("DELETE", endpoint, nil, 30000, true)
         try resp.requireSuccess(endpoint: endpoint)
     }
@@ -250,8 +255,7 @@ struct LocalAPIClient {
     }
 
     func deleteTaildropFile(name: String) async throws {
-        let escaped = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
-        let endpoint = "/localapi/v0/files/\(escaped)"
+        let endpoint = "/localapi/v0/files/\(Self.escapedPathSegment(name))"
         let resp = try await execute("DELETE", endpoint, nil, 30000, true)
         try resp.requireSuccess(endpoint: endpoint)
     }
@@ -263,7 +267,7 @@ struct LocalAPIClient {
             throw LocalAPIError.backend("Taildrop file transport is unavailable")
         }
 
-        let endpoint = "/localapi/v0/file-put/\(peerID)"
+        let endpoint = "/localapi/v0/file-put/\(Self.escapedPathSegment(peerID))"
         let resp = try await executeFile("POST", endpoint, fileURL, transferID, 600000, true)
         try resp.requireSuccess(endpoint: endpoint)
         return transferID
@@ -331,6 +335,10 @@ struct LocalAPIClient {
         }
         try await tkaSign(nodeKey: nodeKey, rotationPublic: validation.TLPub)
         return validation
+    }
+
+    private static func escapedPathSegment(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: pathSegmentAllowed) ?? value
     }
 }
 

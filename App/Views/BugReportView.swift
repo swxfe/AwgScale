@@ -143,7 +143,8 @@ struct BugReportView: View {
                 var diagnostics: [String: Any] = [:]
                 
                 // Basic info
-                diagnostics["report_id"] = UUID().uuidString.prefix(8).uppercased()
+                let reportID = String(UUID().uuidString.prefix(8)).uppercased()
+                diagnostics["report_id"] = reportID
                 diagnostics["timestamp"] = ISO8601DateFormatter().string(from: Date())
                 diagnostics["app_version"] = appState.appVersion
                 diagnostics["os_version"] = ProcessInfo.processInfo.operatingSystemVersionString
@@ -156,7 +157,7 @@ struct BugReportView: View {
                 // Prefs (sanitized)
                 if let prefs = appState.prefs {
                     diagnostics["wants_running"] = prefs.WantRunning ?? false
-                    diagnostics["exit_node_configured"] = prefs.ExitNodeID != nil && !prefs.ExitNodeID!.isEmpty
+                    diagnostics["exit_node_configured"] = !(prefs.ExitNodeID?.isEmpty ?? true)
                     diagnostics["allow_lan_access"] = prefs.ExitNodeAllowLANAccess ?? false
                 }
                 
@@ -201,14 +202,13 @@ struct BugReportView: View {
                 let jsonData = try JSONSerialization.data(withJSONObject: diagnostics, options: [.prettyPrinted, .sortedKeys])
                 
                 // Save to temp file
-                let reportID = diagnostics["report_id"] as! String
                 let fileName = "awgscale-bugreport-\(reportID).json"
                 let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
                 try jsonData.write(to: tempURL)
                 
                 await MainActor.run {
                     reportData = BugReportData(
-                        reportID: String(reportID),
+                        reportID: reportID,
                         timestamp: Date(),
                         size: jsonData.count
                     )

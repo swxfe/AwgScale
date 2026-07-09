@@ -6,6 +6,8 @@ struct MachineAuthView: View {
     @EnvironmentObject var appState: AppState
     @State private var isPolling: Bool = true
     @State private var pollCount: Int = 0
+    @State private var pollingTask: Task<Void, Never>?
+    @State private var pollingRunID: UUID?
     @State private var showingHelpSheet: Bool = false
     @State private var deviceInfo: DeviceAuthInfo?
     
@@ -97,8 +99,9 @@ struct MachineAuthView: View {
                 .buttonStyle(.bordered)
                 
                 Button {
-                    isPolling.toggle()
                     if isPolling {
+                        stopPolling()
+                    } else {
                         startPolling()
                     }
                 } label: {
@@ -118,10 +121,10 @@ struct MachineAuthView: View {
         }
         .onAppear {
             loadDeviceInfo()
-            startPolling()
+            startPolling(resetCount: true)
         }
         .onDisappear {
-            isPolling = false
+            stopPolling()
         }
         .sheet(isPresented: $showingHelpSheet) {
             MachineAuthHelpSheet()
@@ -138,26 +141,59 @@ struct MachineAuthView: View {
         }
     }
     
-    private func startPolling() {
-        Task {
-            while isPolling && pollCount < maxPolls {
-                pollCount += 1
-                
+    private func startPolling(resetCount: Bool = false) {
+        if resetCount || pollCount >= maxPolls {
+            pollCount = 0
+        }
+
+        isPolling = true
+        pollingTask?.cancel()
+
+        let runID = UUID()
+        pollingRunID = runID
+        pollingTask = Task {
+            while !Task.isCancelled {
+                let shouldContinue = await MainActor.run {
+                    isPolling && pollCount < maxPolls && pollingRunID == runID
+                }
+                guard shouldContinue else { break }
+
+                await MainActor.run {
+                    pollCount += 1
+                }
+
                 let approved = await appState.refreshMachineAuthStatus()
+                if Task.isCancelled { break }
                 if approved {
                     await MainActor.run {
-                        isPolling = false
+                        if pollingRunID == runID {
+                            stopPolling()
+                        }
                     }
                     return
                 }
-                
-                try? await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
+
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
+                } catch {
+                    break
+                }
             }
-            
+
             await MainActor.run {
+                guard pollingRunID == runID else { return }
                 isPolling = false
+                pollingTask = nil
+                pollingRunID = nil
             }
         }
+    }
+
+    private func stopPolling() {
+        isPolling = false
+        pollingRunID = nil
+        pollingTask?.cancel()
+        pollingTask = nil
     }
 }
 
