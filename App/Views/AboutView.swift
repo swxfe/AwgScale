@@ -271,7 +271,7 @@ private enum OpenSourceCatalog {
 
     static let runtimeModules = [
         GoRuntimeModule(path: "filippo.io/edwards25519", version: "v1.2.0", sourceNote: nil),
-        GoRuntimeModule(path: "github.com/LiuTangLei/wireguard-go", version: "v0.0.20", sourceNote: nil),
+        GoRuntimeModule(path: "github.com/LiuTangLei/wireguard-go", version: "v0.0.21", sourceNote: nil),
         GoRuntimeModule(path: "github.com/creachadair/msync", version: "v0.7.1", sourceNote: nil),
         GoRuntimeModule(path: "github.com/fxamacker/cbor/v2", version: "v2.9.0", sourceNote: nil),
         GoRuntimeModule(path: "github.com/gaissmai/bart", version: "v0.26.1", sourceNote: nil),
@@ -297,7 +297,7 @@ private enum OpenSourceCatalog {
         GoRuntimeModule(path: "golang.org/x/time", version: "v0.12.0", sourceNote: nil),
         GoRuntimeModule(path: "golang.org/x/tools", version: "v0.44.0", sourceNote: nil),
         GoRuntimeModule(path: "gvisor.dev/gvisor", version: "v0.0.0-20260224225140-573d5e7127a8", sourceNote: nil),
-        GoRuntimeModule(path: "tailscale.com", version: "v1.98.2", sourceNote: "source replaced by github.com/LiuTangLei/tailscale")
+        GoRuntimeModule(path: "tailscale.com", version: "v1.98.8", sourceNote: "source replaced by github.com/LiuTangLei/tailscale")
     ]
 }
 

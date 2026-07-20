@@ -38,7 +38,7 @@ struct LoginView: View {
                     }
                 }
 
-                Text(appState.usesVPNPermission ? "System-wide mode lets every app use the tailnet." : "App-only mode keeps tailnet access inside AwgScale.")
+                Text(appState.vpnPermissionModeDescription)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -46,7 +46,7 @@ struct LoginView: View {
             .background(Color.secondary.opacity(0.10))
             .cornerRadius(12)
             .padding(.horizontal, 32)
-            .disabled(appState.isLoggingIn || appState.isSwitchingNetworkMode)
+            .disabled(appState.isLoggingIn || appState.isSwitchingNetworkMode || !appState.canUseVPNPermission)
 
             Button(action: {
                 appState.startLogin()

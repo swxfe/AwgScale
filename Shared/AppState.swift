@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 private enum LoginFlowError: Error, LocalizedError {
     case missingPrefsResponse
@@ -16,25 +17,58 @@ private enum LoginFlowError: Error, LocalizedError {
 
 private let appInstallMarkerKey = "top.yesican.awgscale.install-marker.v3"
 private let vpnPermissionEnabledKey = "top.yesican.awgscale.vpn-permission-enabled.v1"
+private let packetTunnelProviderEntitlementKey = "com.apple.developer.networking.networkextension"
+let systemVPNUnavailableMessage = "This install was not signed with the Network Extension entitlement. AwgScale will use app-only mode."
 
-private func defaultVPNPermissionEnabled() -> Bool {
-    if let stored = UserDefaults.standard.object(forKey: vpnPermissionEnabledKey) as? Bool {
+func defaultVPNPermissionEnabled(
+    hasVPNCapability: Bool = hasPacketTunnelProviderEntitlement(),
+    stored: Bool? = UserDefaults.standard.object(forKey: vpnPermissionEnabledKey) as? Bool
+) -> Bool {
+    guard hasVPNCapability else { return false }
+    if let stored {
         return stored
     }
-    return hasPacketTunnelProviderEntitlement()
+    return true
 }
 
-private func hasPacketTunnelProviderEntitlement() -> Bool {
-        guard let entitlements = embeddedProvisioningProfileEntitlements(),
-                    let entitlement = entitlements["com.apple.developer.networking.networkextension"] else {
-        return false
+func hasPacketTunnelProviderEntitlement() -> Bool {
+    if entitlementAllowsPacketTunnelProvider(runtimeNetworkExtensionEntitlement()) {
+        return true
     }
 
-    if let values = entitlement as? [String] {
-        return values.contains("packet-tunnel-provider")
+    guard let entitlements = embeddedProvisioningProfileEntitlements() else {
+        return false
+    }
+    return entitlementAllowsPacketTunnelProvider(entitlements[packetTunnelProviderEntitlementKey])
+}
+
+func entitlementAllowsPacketTunnelProvider(_ entitlement: Any?) -> Bool {
+    if let values = entitlement as? [Any] {
+        return values.contains { ($0 as? String) == "packet-tunnel-provider" }
     }
 
     return (entitlement as? Bool) == true
+}
+
+private func runtimeNetworkExtensionEntitlement() -> Any? {
+    typealias SecTaskCreateFromSelfFunc = @convention(c) (CFAllocator?) -> Unmanaged<AnyObject>?
+    typealias SecTaskCopyValueFunc = @convention(c) (OpaquePointer, CFString, UnsafeMutablePointer<Unmanaged<CFError>?>?) -> Unmanaged<CFTypeRef>?
+
+    guard let handle = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY) else { return nil }
+    defer { dlclose(handle) }
+
+    guard let createSym = dlsym(handle, "SecTaskCreateFromSelf"),
+          let copySym = dlsym(handle, "SecTaskCopyValueForEntitlement") else { return nil }
+
+    let createFunc = unsafeBitCast(createSym, to: SecTaskCreateFromSelfFunc.self)
+    let copyFunc = unsafeBitCast(copySym, to: SecTaskCopyValueFunc.self)
+
+    // SecTaskCreateFromSelf follows the Create Rule (+1); release() balances the ownership.
+    guard let task = createFunc(nil) else { return nil }
+    defer { task.release() }
+
+    // SecTaskCopyValueForEntitlement follows the Copy Rule (+1); takeRetainedValue() balances it.
+    return copyFunc(OpaquePointer(task.toOpaque()), packetTunnelProviderEntitlementKey as CFString, nil)?.takeRetainedValue()
 }
 
 private func embeddedProvisioningProfileEntitlements() -> [String: Any]? {
@@ -101,7 +135,8 @@ class AppState: ObservableObject {
     @Published var health: HealthState?
     @Published var lastError: String?
     @Published var isLoggingIn: Bool = false
-    @Published var usesVPNPermission: Bool = defaultVPNPermissionEnabled()
+    @Published private(set) var canUseVPNPermission: Bool
+    @Published var usesVPNPermission: Bool
     @Published var isSwitchingNetworkMode: Bool = false
     @Published var isRestoringSession: Bool = false
     @Published var isAwaitingMachineAuth: Bool = false
@@ -148,7 +183,7 @@ class AppState: ObservableObject {
     private let loginBackend = AppLoginBackend()
     private var isCompletingAppLogin = false
     private var loginCompletionPollTask: Task<Void, Never>?
-    private var loginMayRequireMachineAuth = false
+    private var loginMachineAuthPending = false
     private var loginBrowserWasPresented = false
 
     var appVersion: String {
@@ -164,6 +199,15 @@ class AppState: ObservableObject {
             return "Received \(latestTaildropFileName). Open Taildrop to view or share it."
         }
         return "A file was received over Taildrop. Open Taildrop to view or share it."
+    }
+
+    var vpnPermissionModeDescription: String {
+        if !canUseVPNPermission {
+            return systemVPNUnavailableMessage
+        }
+        return usesVPNPermission
+            ? "System-wide VPN mode keeps the original behavior. Switching modes resets the current app/VPN network session but keeps the login."
+            : "App-only mode keeps tailnet traffic inside AwgScale. Switching modes resets the current app/VPN network session but keeps the login."
     }
 
     var hasVisibleSession: Bool {
@@ -224,6 +268,13 @@ class AppState: ObservableObject {
 
     func setUsesVPNPermission(_ enabled: Bool) {
         guard usesVPNPermission != enabled else { return }
+        guard !enabled || canUseVPNPermission else {
+            usesVPNPermission = false
+            UserDefaults.standard.set(false, forKey: vpnPermissionEnabledKey)
+            UserDefaults.standard.synchronize()
+            lastError = systemVPNUnavailableMessage
+            return
+        }
         guard pendingWantRunning == nil, !isSwitchingNetworkMode else {
             lastError = "Wait for the current connection change to finish."
             return
@@ -251,7 +302,7 @@ class AppState: ObservableObject {
         loginCompletionPollTask?.cancel()
         loginCompletionPollTask = nil
         pendingWantRunning = nil
-        if !isLoggingIn && !loginMayRequireMachineAuth {
+        if !isLoggingIn && !loginMachineAuthPending {
             isAwaitingMachineAuth = false
         }
 
@@ -313,7 +364,7 @@ class AppState: ObservableObject {
     }
 
     private var isAppLoginBackendExpected: Bool {
-        !usesVPNPermission || isLoggingIn || isAwaitingMachineAuth || loginMayRequireMachineAuth
+        !usesVPNPermission || isLoggingIn || isAwaitingMachineAuth || loginMachineAuthPending
     }
 
     private var shouldProtectExistingSessionFromLoginStart: Bool {
@@ -321,12 +372,22 @@ class AppState: ObservableObject {
     }
 
     private var canShowMachineAuthDuringLogin: Bool {
-        loginMayRequireMachineAuth || loginBrowserWasPresented
+        isLoggingIn || loginBrowserWasPresented || loginMachineAuthPending
+    }
+
+    private func showMachineAuthPending() {
+        ipnState = .needsMachineAuth
+        isAwaitingMachineAuth = true
+        loginMachineAuthPending = true
+        browseToURL = nil
     }
 
     // MARK: - Initialization
 
-    init() {
+    init(vpnPermissionCapability: Bool = hasPacketTunnelProviderEntitlement()) {
+        self.canUseVPNPermission = vpnPermissionCapability
+        self.usesVPNPermission = defaultVPNPermissionEnabled(hasVPNCapability: vpnPermissionCapability)
+
         resetPersistedStateAfterFreshInstallIfNeeded()
 
         // Load initial state from App Group
@@ -363,7 +424,7 @@ class AppState: ObservableObject {
     }
 
     private var shouldResumeLoginBackendOnForeground: Bool {
-        !usesVPNPermission && hasBackendSnapshot || isLoggingIn || isAwaitingMachineAuth || loginMayRequireMachineAuth
+        !usesVPNPermission && hasBackendSnapshot || isLoggingIn || isAwaitingMachineAuth || loginMachineAuthPending
     }
 
     private func clearSharedLoginState() {
@@ -456,7 +517,7 @@ class AppState: ObservableObject {
         isLoggingIn = false
         isAwaitingMachineAuth = false
         isCompletingAppLogin = false
-        loginMayRequireMachineAuth = false
+        loginMachineAuthPending = false
         loginBrowserWasPresented = false
         pendingWantRunning = nil
         isUpdatingExitNode = false
@@ -634,7 +695,7 @@ class AppState: ObservableObject {
                 clearBackendSnapshotState()
             }
             if state == .needsMachineAuth && fromLoginBackend && canShowMachineAuthDuringLogin {
-                isAwaitingMachineAuth = true
+                showMachineAuthPending()
                 startLoginCompletionPolling()
             }
         }
@@ -885,7 +946,7 @@ class AppState: ObservableObject {
             throw LoginFlowError.localAPI("Machine authorization pending")
         default:
             isAwaitingMachineAuth = false
-            loginMayRequireMachineAuth = false
+            loginMachineAuthPending = false
             await fetchCurrentProfileFromLoginBackend()
         }
     }
@@ -909,7 +970,7 @@ class AppState: ObservableObject {
         loginCompletionPollTask = nil
         isLoggingIn = true
         isAwaitingMachineAuth = false
-        loginMayRequireMachineAuth = !controlURL.isEmpty
+        loginMachineAuthPending = false
         loginBrowserWasPresented = false
         lastError = nil
 
@@ -987,10 +1048,6 @@ class AppState: ObservableObject {
     func loginBrowserDidDismiss() {
         loginBrowserWasPresented = true
         browseToURL = nil
-        if loginMayRequireMachineAuth {
-            isAwaitingMachineAuth = true
-            ipnState = .needsMachineAuth
-        }
         startLoginCompletionPolling()
     }
 
@@ -1006,10 +1063,8 @@ class AppState: ObservableObject {
         isCompletingAppLogin = true
         Task {
             let backendState = await loginBackendState()
-            if (backendState == .needsMachineAuth && canShowMachineAuthDuringLogin) ||
-                (loginMayRequireMachineAuth && (backendState == .needsLogin || backendState == .noState)) {
-                ipnState = .needsMachineAuth
-                isAwaitingMachineAuth = true
+            if backendState == .needsMachineAuth && canShowMachineAuthDuringLogin {
+                showMachineAuthPending()
                 isCompletingAppLogin = false
                 startLoginCompletionPolling()
                 return
@@ -1027,7 +1082,7 @@ class AppState: ObservableObject {
                 loginBackend.stop()
             }
             isAwaitingMachineAuth = false
-            loginMayRequireMachineAuth = false
+            loginMachineAuthPending = false
             loginBrowserWasPresented = false
             isLoggingIn = false
             isCompletingAppLogin = false
@@ -1080,11 +1135,11 @@ class AppState: ObservableObject {
                     resetStaleLoginState()
                     return
                 }
-                isAwaitingMachineAuth = true
+                showMachineAuthPending()
                 startLoginCompletionPolling()
             default:
                 isAwaitingMachineAuth = false
-                loginMayRequireMachineAuth = false
+                loginMachineAuthPending = false
                 await fetchCurrentProfileFromLoginBackend()
             }
         }
@@ -1160,6 +1215,12 @@ class AppState: ObservableObject {
                     return
                 }
 
+                if await self.loginBackendNeedsMachineAuth() {
+                    self.showMachineAuthPending()
+                    self.loginCompletionPollTask = nil
+                    return
+                }
+
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
 
@@ -1178,6 +1239,10 @@ class AppState: ObservableObject {
         default:
             return true
         }
+    }
+
+    private func loginBackendNeedsMachineAuth() async -> Bool {
+        await loginBackendState() == .needsMachineAuth
     }
 
     private func loginBackendState() async -> IpnState? {
@@ -1204,14 +1269,14 @@ class AppState: ObservableObject {
 
             switch backendState {
             case .needsMachineAuth:
-                isAwaitingMachineAuth = true
+                showMachineAuthPending()
                 return false
             case .needsLogin, .noState:
                 return false
             default:
                 isLoggingIn = false
                 isAwaitingMachineAuth = false
-                loginMayRequireMachineAuth = false
+                loginMachineAuthPending = false
                 browseToURL = nil
                 finishAppLogin()
                 return true
@@ -1337,7 +1402,7 @@ class AppState: ObservableObject {
                         if tolerateTransientUnauthenticated && Date() < transientUnauthenticatedDeadline {
                             break
                         }
-                        isAwaitingMachineAuth = true
+                        showMachineAuthPending()
                         return "machine authorization is pending"
                     default:
                         break
@@ -1560,7 +1625,7 @@ class AppState: ObservableObject {
                         if tolerateTransientUnauthenticated && Date() < transientUnauthenticatedDeadline {
                             break
                         }
-                        isAwaitingMachineAuth = true
+                        showMachineAuthPending()
                         return "machine authorization is pending"
                     default:
                         break

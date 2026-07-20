@@ -34,8 +34,6 @@ Free accounts cannot request the Network Extension entitlement. The app runs in 
 **Available in app-only mode:**
 - Built-in SSH terminal (connects to tailnet hosts directly)
 - Built-in browser with tailnet HTTP access and exit-node public browsing (iOS 17+)
-**Not available without Network Extension:**
-- System-wide VPN tunnel, exit node routing for other apps
 
 ---
 

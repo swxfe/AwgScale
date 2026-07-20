@@ -3,10 +3,11 @@ module github.com/LiuTangLei/awgscale-ios
 go 1.26.3
 
 require (
-	github.com/LiuTangLei/wireguard-go v0.0.20
+	github.com/LiuTangLei/wireguard-go v0.0.21
 	golang.org/x/crypto v0.50.0
 	golang.org/x/mobile v0.0.0-20260312152759-81488f6aeb60
-	tailscale.com v1.98.2
+	golang.org/x/net v0.53.0
+	tailscale.com v1.98.8
 )
 
 require (
@@ -40,7 +41,6 @@ require (
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/mod v0.35.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/term v0.42.0 // indirect
@@ -52,4 +52,4 @@ require (
 	gvisor.dev/gvisor v0.0.0-20260224225140-573d5e7127a8 // indirect
 )
 
-replace tailscale.com => github.com/LiuTangLei/tailscale v1.98.2
+replace tailscale.com => github.com/LiuTangLei/tailscale v1.98.8

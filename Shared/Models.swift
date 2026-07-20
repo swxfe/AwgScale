@@ -275,11 +275,7 @@ struct AmneziaWGPrefs: Codable {
         (S2 != nil && S2 != 0) ||
         (S3 != nil && S3 != 0) ||
         (S4 != nil && S4 != 0) ||
-        (I1 != nil && !I1!.isEmpty) ||
-        (I2 != nil && !I2!.isEmpty) ||
-        (I3 != nil && !I3!.isEmpty) ||
-        (I4 != nil && !I4!.isEmpty) ||
-        (I5 != nil && !I5!.isEmpty) ||
+        [I1, I2, I3, I4, I5].contains { $0?.isEmpty == false } ||
         (H1?.hasValue == true) ||
         (H2?.hasValue == true) ||
         (H3?.hasValue == true) ||

@@ -31,6 +31,47 @@ final class LocalAPITests: XCTestCase {
             XCTAssertTrue(error.localizedDescription.contains("invalid response body"))
         }
     }
+
+    func testTaildropDeleteEscapesOnePathSegment() async throws {
+        var capturedEndpoint = ""
+        let client = LocalAPIClient { _, endpoint, _, _, _ in
+            capturedEndpoint = endpoint
+            return IPCResponse.success(statusCode: 204)
+        }
+
+        try await client.deleteTaildropFile(name: "a/b #?.txt")
+
+        XCTAssertEqual(capturedEndpoint, "/localapi/v0/files/a%2Fb%20%23%3F.txt")
+    }
+
+    func testProfileIDsAreEscapedAsPathSegments() async throws {
+        var capturedEndpoints: [String] = []
+        let client = LocalAPIClient { _, endpoint, _, _, _ in
+            capturedEndpoints.append(endpoint)
+            return IPCResponse.success(statusCode: 204)
+        }
+
+        try await client.switchProfile(id: "profile/one")
+        try await client.deleteProfile(id: "profile#two")
+
+        XCTAssertEqual(capturedEndpoints, [
+            "/localapi/v0/profiles/profile%2Fone",
+            "/localapi/v0/profiles/profile%23two",
+        ])
+    }
+}
+
+final class TaildropFileSafetyTests: XCTestCase {
+    func testAPIFileNamesMustBeLocalBasenames() {
+        XCTAssertTrue(TaildropFile.isSafeLocalName("report.txt"))
+        XCTAssertTrue(TaildropFile.isSafeLocalName("space name.txt"))
+        XCTAssertFalse(TaildropFile.isSafeLocalName(""))
+        XCTAssertFalse(TaildropFile.isSafeLocalName("."))
+        XCTAssertFalse(TaildropFile.isSafeLocalName(".."))
+        XCTAssertFalse(TaildropFile.isSafeLocalName("../secret.txt"))
+        XCTAssertFalse(TaildropFile.isSafeLocalName("folder/file.txt"))
+        XCTAssertFalse(TaildropFile.isSafeLocalName("folder\\file.txt"))
+    }
 }
 
 final class TerminalScreenBufferTests: XCTestCase {

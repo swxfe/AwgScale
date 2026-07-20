@@ -1,8 +1,38 @@
+import Foundation
 import XCTest
 @testable import AwgScale
 
 @MainActor
 final class AppStateTests: XCTestCase {
+
+    func testDefaultVPNPermissionRequiresCurrentCapability() {
+        XCTAssertFalse(defaultVPNPermissionEnabled(hasVPNCapability: false, stored: true))
+        XCTAssertFalse(defaultVPNPermissionEnabled(hasVPNCapability: false, stored: nil))
+        XCTAssertTrue(defaultVPNPermissionEnabled(hasVPNCapability: true, stored: nil))
+        XCTAssertTrue(defaultVPNPermissionEnabled(hasVPNCapability: true, stored: true))
+        XCTAssertFalse(defaultVPNPermissionEnabled(hasVPNCapability: true, stored: false))
+    }
+
+    func testNetworkExtensionEntitlementParsingRequiresPacketTunnelProvider() {
+        XCTAssertTrue(entitlementAllowsPacketTunnelProvider(["packet-tunnel-provider"]))
+        XCTAssertTrue(entitlementAllowsPacketTunnelProvider(["dns-proxy", "packet-tunnel-provider"] as NSArray))
+        XCTAssertTrue(entitlementAllowsPacketTunnelProvider(true))
+        XCTAssertFalse(entitlementAllowsPacketTunnelProvider(["dns-proxy"]))
+        XCTAssertFalse(entitlementAllowsPacketTunnelProvider(false))
+        XCTAssertFalse(entitlementAllowsPacketTunnelProvider(nil))
+    }
+
+    func testUnavailableSystemVPNCannotBeEnabled() {
+        let state = AppState(vpnPermissionCapability: false)
+
+        XCTAssertFalse(state.canUseVPNPermission)
+        XCTAssertFalse(state.usesVPNPermission)
+
+        state.setUsesVPNPermission(true)
+
+        XCTAssertFalse(state.usesVPNPermission)
+        XCTAssertEqual(state.lastError, systemVPNUnavailableMessage)
+    }
 
     func testHandleNotifyStateChange() {
         let state = AppState()
@@ -287,6 +317,19 @@ final class AppStateTests: XCTestCase {
         XCTAssertNotNil(state.currentProfile)
         XCTAssertNotNil(state.selfNode)
         XCTAssertFalse(state.peers.isEmpty)
+    }
+
+    func testLoginBrowserDismissDoesNotAssumeMachineAuth() {
+        let state = AppState()
+        state.isLoggingIn = true
+        state.ipnState = .needsLogin
+        state.browseToURL = "https://login.tailscale.com/a/test"
+
+        state.loginBrowserDidDismiss()
+
+        XCTAssertFalse(state.isAwaitingMachineAuth)
+        XCTAssertEqual(state.ipnState, .needsLogin)
+        XCTAssertNil(state.browseToURL)
     }
 
     func testLogoutResetsState() {

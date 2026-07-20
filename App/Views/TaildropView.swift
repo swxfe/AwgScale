@@ -607,15 +607,7 @@ struct TaildropFile: Identifiable {
         self.size = response.Size
         self.sender = response.Sender
         self.started = nil // Parse if needed
-        
-        // Construct the local file URL from the Taildrop directory
-        // Files are stored in App Group container under taildrop/
-        if let groupContainer = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: IPCConstants.appGroupID) {
-            let taildropDir = groupContainer.appendingPathComponent("taildrop", isDirectory: true)
-            self.localURL = taildropDir.appendingPathComponent(response.Name)
-        } else {
-            self.localURL = nil
-        }
+        self.localURL = Self.localURL(forAPIName: response.Name)
     }
 
     init(localURL: URL) {
@@ -626,6 +618,26 @@ struct TaildropFile: Identifiable {
         self.size = Int64(values?.fileSize ?? 0)
         self.started = values?.creationDate
         self.localURL = localURL
+    }
+
+    static func isSafeLocalName(_ name: String) -> Bool {
+        guard !name.isEmpty,
+              name != ".",
+              name != "..",
+              name == (name as NSString).lastPathComponent,
+              name.rangeOfCharacter(from: CharacterSet(charactersIn: "/\\")) == nil else {
+            return false
+        }
+        return true
+    }
+
+    private static func localURL(forAPIName name: String) -> URL? {
+        guard isSafeLocalName(name),
+              let groupContainer = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: IPCConstants.appGroupID) else {
+            return nil
+        }
+        let taildropDir = groupContainer.appendingPathComponent("taildrop", isDirectory: true)
+        return taildropDir.appendingPathComponent(name, isDirectory: false)
     }
 }
 

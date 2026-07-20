@@ -30,3 +30,6 @@ go.work.sum
 docs.tmp/
 *.tmp
 *.swp
+
+# VS Code Local History extension
+.history/

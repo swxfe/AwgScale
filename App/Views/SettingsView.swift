@@ -18,7 +18,7 @@ struct SettingsView: View {
     }
 
     private var modeSwitchDisabled: Bool {
-        appState.pendingWantRunning != nil || appState.isSwitchingNetworkMode
+        appState.pendingWantRunning != nil || appState.isSwitchingNetworkMode || !appState.canUseVPNPermission
     }
 
     var body: some View {
@@ -61,7 +61,7 @@ struct SettingsView: View {
               } header: {
                   Text("Connection Mode")
               } footer: {
-                  Text(appState.usesVPNPermission ? "System-wide VPN mode keeps the original behavior. Switching modes resets the current app/VPN network session but keeps the login." : "App-only mode keeps tailnet traffic inside AwgScale. Switching modes resets the current app/VPN network session but keeps the login.")
+                  Text(appState.vpnPermissionModeDescription)
               }
 
             Section("Network") {

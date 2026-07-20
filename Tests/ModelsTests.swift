@@ -71,7 +71,8 @@ final class ModelsTests: XCTestCase {
     func testMaskedPrefsEncoding() throws {
         let prefs = MaskedPrefs.setWantRunning(true)
         let data = try JSONEncoder().encode(prefs)
-        let dict = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let object = try JSONSerialization.jsonObject(with: data)
+        let dict = try XCTUnwrap(object as? [String: Any])
 
         XCTAssertEqual(dict["WantRunning"] as? Bool, true)
         XCTAssertEqual(dict["WantRunningSet"] as? Bool, true)
